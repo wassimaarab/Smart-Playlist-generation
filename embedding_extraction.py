@@ -60,7 +60,7 @@ df['genre'] = genres
 df['filename'] = filenames
 
 # En CSV (lisible avec pandas) :
-df.to_csv("muq_embeddings1.csv", index=False)
+df.to_csv("muq_embedding_GTZAN.csv", index=False)
 
 # Ou en format PyTorch pour entraînement direct :
 torch.save({'embeddings': torch.tensor(embeddings), 'genres': genres, 'filenames': filenames}, "muq_embeddings.pt")

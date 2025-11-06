@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from sklearn.manifold import TSNE
-def load_embeddings(csv_path="/home/aguerouani/project/muq_embeddings.csv"):
+def load_embeddings(csv_path="muq_embedding_GTZAN.csv"):
     """
     Load embedding vectors from a CSV file into a NumPy array.
     """
