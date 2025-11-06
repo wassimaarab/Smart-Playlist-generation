@@ -3,15 +3,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from sklearn.manifold import TSNE
-def load_embeddings(csv_path="/home/aguerouani/project/muq_embeddings.csv"):
+def load_embeddings(csv_path="fma_muq_embeddings.csv"):
     """
     Load embedding vectors from a CSV file into a NumPy array.
     """
     
     data = pd.read_csv(csv_path)
     genres = data['genre']  #  the second last column is 'genre'
-    filenames = data['filename']  #  the last column is 'filename'
-    data.drop(columns=['genre', 'filename'], inplace=True)
+    filenames = data['track_id']  #  the last column is 'filename'
+    data.drop(columns=['genre', 'track_id'], inplace=True)
     return data.to_numpy(), genres.to_numpy(), filenames.to_numpy()
 
 if __name__ == "__main__":
@@ -41,6 +41,6 @@ if __name__ == "__main__":
     plt.grid(True)
 
     # Sauvegarde du graphique
-    plt.savefig("tsne_muQ_embeddings_GTZAN.png", dpi=300)
-    print("✅ t-SNE plot saved as tsne_muQ_embeddings.png")
+    plt.savefig("tsne_muQ_embeddings_FMA.png", dpi=300)
+    print("✅ t-SNE plot saved as tsne_muQ_embeddings_FMA.png")
 
