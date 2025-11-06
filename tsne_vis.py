@@ -4,6 +4,7 @@ import pandas as pd
 
 from sklearn.manifold import TSNE
 def load_embeddings(csv_path="fma_muq_embeddings.csv"):
+
     """
     Load embedding vectors from a CSV file into a NumPy array.
     """
