@@ -68,7 +68,7 @@ dataset = AudioDataset(csv_file, audio_dir)
 
 batch_size = 16
 lr = 0.001
-epochs = 30
+epochs = 10
 # Split train/val 80/20
 train_size = int(0.8 * len(dataset))
 val_size = len(dataset) - train_size
@@ -153,7 +153,7 @@ for epoch in range(epochs):
 
 #TSNE Visualization
 
-def visualize_tsne(dataset, num_samples=500):
+def visualize_tsne(dataset, num_samples=900):
     X_list, y_list = [] , []
     count = 0
     for batch_X, batch_y in dataset:

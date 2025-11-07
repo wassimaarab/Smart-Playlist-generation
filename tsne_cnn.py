@@ -2,14 +2,19 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
-from CNN import TemporalCNN, AudioDataset
+from CNN import TemporalCNN, AudioDataset, stratified_split
 import pandas as pd
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
-def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=500):
-    # Charger dataset et loader
+def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=500, random_state=42):
+    # Charger dataset
     dataset = AudioDataset(csv_file, audio_dir, duration=28)
-    test_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+    # Recréer le split pour récupérer les indices de test
+    _, _, test_idx = stratified_split(dataset, random_state=random_state)
+
+    # DataLoader uniquement sur le test
+    test_loader = DataLoader(Subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
 
     # Charger modèle
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -45,10 +50,10 @@ def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=5
         idxs = y_arr == lbl
         plt.scatter(X_2d[idxs,0], X_2d[idxs,1], label=dataset.index_to_label[lbl], alpha=0.7)
     plt.legend()
-    plt.title("Projection t-SNE en 2D des embeddings CNN")
+    plt.title("Projection t-SNE en 2D des embeddings CNN (Test set)")
     plt.xlabel("TSNE 1")
     plt.ylabel("TSNE 2")
-    plt.savefig("tsne_cnn_embeddings.png", dpi=300, bbox_inches='tight')
+    plt.savefig("tsne_cnn_embeddings_test.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 # ----------------------------
@@ -58,4 +63,4 @@ if __name__ == "__main__":
     model_path = "temporal_cnn_gtzan.pth"
     csv_file = './Data/features_30_sec.csv'
     audio_dir = './Data/genres_original/'
-    visualize_tsne(model_path, csv_file, audio_dir, num_samples=1000)
+    visualize_tsne(model_path, csv_file, audio_dir, num_samples=150)
