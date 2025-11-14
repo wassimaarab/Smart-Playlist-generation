@@ -131,7 +131,7 @@ class TemporalCNN(nn.Module):
 # ----------------------------
 # Entraînement
 # ----------------------------
-def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="temporal_cnn_gtzan.pth", val_threshold=0.65):
+def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/weights/temporal_cnn_gtzan.pth", val_threshold=0.65):
     dataset = AudioDataset(csv_file, audio_dir, duration=28)
     train_size = int(0.7 * len(dataset))
     test_size = (len(dataset) - train_size)//2
@@ -240,7 +240,7 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="tempor
     plt.legend()
 
     plt.tight_layout()
-    plt.savefig("training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("CNN/training_plot/training_curves_1.png", dpi=300, bbox_inches='tight')
     plt.show()
 
     return model, test_loader, dataset
@@ -250,6 +250,6 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="tempor
 # Main
 # ----------------------------
 if __name__ == "__main__":
-    csv_file = './Data/features_30_sec.csv'
-    audio_dir = './Data/genres_original/'
-    model, test_loader, dataset = train_model(csv_file, audio_dir, epochs=50)
+    csv_file = 'Data/features_30_sec.csv'
+    audio_dir = 'Data/genres_original/'
+    model, test_loader, dataset = train_model(csv_file, audio_dir, epochs=100)

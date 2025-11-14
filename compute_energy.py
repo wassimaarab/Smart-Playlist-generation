@@ -1,7 +1,9 @@
 import pandas as pd
 
 # Charger le log
-df = pd.read_csv("gpu_power_log.csv", skiprows=1, names=["timestamp", "power"])
+csv_path = "CNN/gpu_power_log_entrainement_CNN_tsne.csv"
+
+df = pd.read_csv(csv_path, skiprows=1, names=["timestamp", "power"])
 # Nettoyage
 df["power"] = df["power"].str.replace(" W", "").astype(float)
 

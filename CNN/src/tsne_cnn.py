@@ -53,14 +53,14 @@ def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=5
     plt.title("Projection t-SNE en 2D des embeddings CNN (Test set)")
     plt.xlabel("TSNE 1")
     plt.ylabel("TSNE 2")
-    plt.savefig("tsne_cnn_embeddings_test.png", dpi=300, bbox_inches='tight')
+    plt.savefig("CNN/tsne_plot/tsne_cnn_embeddings_test.png", dpi=300, bbox_inches='tight')
     plt.show()
 
 # ----------------------------
 # Main
 # ----------------------------
 if __name__ == "__main__":
-    model_path = "temporal_cnn_gtzan.pth"
-    csv_file = './Data/features_30_sec.csv'
-    audio_dir = './Data/genres_original/'
+    model_path = "CNN/weights/temporal_cnn_gtzan.pth"
+    csv_file = 'Data/features_30_sec.csv'
+    audio_dir = 'Data/genres_original/'
     visualize_tsne(model_path, csv_file, audio_dir, num_samples=150)
