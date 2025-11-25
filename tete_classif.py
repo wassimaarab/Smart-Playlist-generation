@@ -56,14 +56,14 @@ class MuQClassifier(nn.Module):
 # ============================================
 # 3. CHARGEMENT DES DONNÉES
 # ============================================
-def load_data(csv_path="muq_embeddings.csv"):
+def load_data(csv_path="muq_embeddings.csv",label_column='genre'):
     """Charge les embeddings depuis le CSV"""
     df = pd.read_csv(csv_path)
     
     # Séparer embeddings et labels
-    embeddings = df.drop(['genre', 'filename'], axis=1).values
-    genres = df['genre'].values
-    
+    embeddings = df.drop([label_column, 'filename'], axis=1).values
+    genres = df[label_column].values
+
     # Encoder les labels
     le = LabelEncoder()
     labels = le.fit_transform(genres)
