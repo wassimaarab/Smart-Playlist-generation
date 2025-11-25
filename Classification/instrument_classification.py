@@ -8,7 +8,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"  Device : {device}")
 
 # Charger les données
-embeddings, labels, label_encoder = load_data("muq_embedding_nsynth.csv",label_column='instrument')
+embeddings, labels, label_encoder = load_data("embeddings/muq_embedding_nsynth.csv",label_column='instrument')
 
 # Split train/val/test
 X_train, X_temp, y_train, y_temp = train_test_split(
@@ -39,17 +39,18 @@ print(f"\n Modèle créé : {sum(p.numel() for p in model.parameters())} paramè
 
 # Entraînement
 print("\n Début de l'entraînement...\n")
-history = train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001,model_path='best_muq_classifier_instruments.pt')
+history = train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001,model_path='models/best_muq_classifier_instruments.pt')
 
 # Charger le meilleur modèle
-model.load_state_dict(torch.load('best_muq_classifier_instruments.pt'))
+model.load_state_dict(torch.load('models/best_muq_classifier_instruments.pt'))
 
 # Évaluation finale
 print("\n Évaluation sur le test set :")
-evaluate_model(model, test_loader, label_encoder, device)
+evaluate_model(model, test_loader, label_encoder, device,confusion_matrix_path='Viz/confusion_matrix_instruments.png')
 
 
 print("\n Entraînement terminé !")
 print(" Fichiers sauvegardés :")
-print("   - best_muq_classifier_instruments.pt (modèle)")
-print("   - confusion_matrix.png (visualisation)")
+print("   - models/best_muq_classifier_instruments.pt (modèle)")
+print("   - Viz/confusion_matrix.png (visualisation)")
+

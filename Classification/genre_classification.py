@@ -8,7 +8,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"  Device : {device}")
 
 # Charger les données
-embeddings, labels, label_encoder = load_data("muq_embedding_GTZAN.csv")
+embeddings, labels, label_encoder = load_data("embeddings/muq_embedding_GTZAN.csv")
 
 # Split train/val/test
 X_train, X_temp, y_train, y_temp = train_test_split(
@@ -42,7 +42,7 @@ print("\n Début de l'entraînement...\n")
 history = train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001)
 
 # Charger le meilleur modèle
-model.load_state_dict(torch.load('best_muq_classifier.pt'))
+model.load_state_dict(torch.load('models/best_muq_classifier.pt'))
 
 # Évaluation finale
 print("\n Évaluation sur le test set :")

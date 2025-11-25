@@ -56,7 +56,7 @@ class MuQClassifier(nn.Module):
 # ============================================
 # 3. CHARGEMENT DES DONNÉES
 # ============================================
-def load_data(csv_path="muq_embeddings.csv",label_column='genre'):
+def load_data(csv_path="embeddings/muq_embeddings.csv",label_column='genre'):
     """Charge les embeddings depuis le CSV"""
     df = pd.read_csv(csv_path)
     
@@ -77,7 +77,7 @@ def load_data(csv_path="muq_embeddings.csv",label_column='genre'):
 # ============================================
 # 4. ENTRAÎNEMENT
 # ============================================
-def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001,model_path='best_muq_classifier.pt'):
+def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001,model_path='models/best_muq_classifier.pt'):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', 
@@ -151,7 +151,7 @@ def train_model(model, train_loader, val_loader, device, epochs=50, lr=0.001,mod
 # ============================================
 # 5. ÉVALUATION
 # ============================================
-def evaluate_model(model, test_loader, label_encoder, device, confusion_matrix_path='confusion_matrix.png'):
+def evaluate_model(model, test_loader, label_encoder, device, confusion_matrix_path='Viz/confusion_matrix.png'):
     model.eval()
     all_preds, all_labels = [], []
     
