@@ -1,0 +1,8 @@
+# modèles
+models/*.pt
+
+# images
+Viz/*.png
+
+# notebooks checkpoints
+.ipynb_checkpoints/
