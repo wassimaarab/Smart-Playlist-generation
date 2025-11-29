@@ -16,41 +16,89 @@ warnings.filterwarnings("ignore")
 # Dataset
 # ----------------------------
 class AudioDataset(Dataset):
-    def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=3):
-        self.data = pd.read_csv(csv_file)
+    def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
+        self.original_data = pd.read_csv(csv_file)
         self.audio_dir = audio_dir
         self.sr = sr
         self.n_mels = n_mels
         self.duration = duration
+        
+        cat = pd.Categorical(self.original_data['label'])
+        self.labels = cat.codes
+        self.label_to_index = {cat.categories[i]: i for i in range(len(cat.categories))}
+        self.index_to_label = {i: cat.categories[i] for i in range(len(cat.categories))}
+
+        self.cached_specs = []
+        # Le DataFrame 'self.data' contient DÉSORMAIS uniquement les échantillons valides
+        self.data = self.load_data_to_cache() 
+
+        
+        # Les labels et mappings sont basés sur les données validées
         cat = pd.Categorical(self.data['label'])
         self.labels = cat.codes
         self.label_to_index = {cat.categories[i]: i for i in range(len(cat.categories))}
         self.index_to_label = {i: cat.categories[i] for i in range(len(cat.categories))}
 
     def __len__(self):
-        return len(self.data)
+        return len(self.cached_specs)
+
+    def load_data_to_cache(self):
+        print("Mise en cache des spectrogrammes...")
+        
+        valid_indices_original_df = [] 
+        
+        for idx in range(len(self.original_data)):
+            label_str = self.original_data.loc[idx, 'label']
+            filename = self.original_data.loc[idx, 'filename']
+            path = os.path.join(self.audio_dir, label_str, filename)
+
+            try:
+                # --- DÉBUT : CODE DE CHARGEMENT ET DE PRÉTRAITEMENT (CRÉATION DE X et y) ---
+                
+                # 1. Chargement du fichier audio avec librosa
+                y, sr = librosa.load(path, sr=self.sr, duration=self.duration)
+                if y.size == 0:
+                    raise ValueError("Audio vide ou corrompu")
+                    
+                # 2. Calcul du Mel-Spectrogramme
+                S = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels)
+                S_dB = librosa.power_to_db(S, ref=np.max)
+                
+                # 3. Normalisation (Vérification de la division par zéro)
+                denom = S_dB.max() - S_dB.min()
+                if denom == 0:
+                    raise ValueError("Spectrogramme plat (silence ou erreur de lecture)")
+                    
+                S_norm = (S_dB - S_dB.min()) / denom
+                
+                # 4. Conversion en tenseurs PyTorch
+                X = torch.tensor(S_norm, dtype=torch.float32).unsqueeze(0)
+                y_label_idx = self.label_to_index[label_str] # Le label est bien défini ici.
+                y = torch.tensor(y_label_idx, dtype=torch.long)
+                
+                # --- FIN : CODE DE CHARGEMENT ET DE PRÉTRAITEMENT ---
+                
+                # STOCKAGE dans le cache (l'ordre ici correspondra au nouvel index)
+                self.cached_specs.append((X, y))
+                
+                # Enregistrement de l'indice original pour le filtrage
+                valid_indices_original_df.append(idx)
+                
+            except Exception as e:
+                # Échantillon ignoré
+                # print(f"Erreur lors du chargement de {path} : {e}") # Décommenter pour débogage
+                continue
+                
+        print(f"Mise en cache terminée. {len(self.cached_specs)} échantillons chargés.")
+        
+        # Retourne uniquement les lignes du DF original qui correspondent aux échantillons chargés
+        return self.original_data.iloc[valid_indices_original_df].reset_index(drop=True)
 
     def __getitem__(self, idx):
-        label_str = self.data.loc[idx, 'label']
-        filename = self.data.loc[idx, 'filename']
-        path = os.path.join(self.audio_dir, label_str, filename)
-        try:
-            y, sr = librosa.load(path, sr=self.sr, duration=self.duration)
-            if y.size == 0:
-                raise ValueError("Audio vide")
-        except Exception:
-            new_idx = np.random.randint(0, len(self.data))
-            return self.__getitem__(new_idx)
-        S = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels)
-        S_dB = librosa.power_to_db(S, ref=np.max)
-        denom = S_dB.max() - S_dB.min()
-        if denom == 0:
-            new_idx = np.random.randint(0, len(self.data))
-            return self.__getitem__(new_idx)
-        S_norm = (S_dB - S_dB.min()) / denom
-        X = torch.tensor(S_norm, dtype=torch.float32).unsqueeze(0)
-        y = torch.tensor(self.label_to_index[label_str], dtype=torch.long)
-        return X, y
+        # Récupération directe du cache
+        # Note : Le bloc try-except pour vérifier les indices dans __getitem__ n'est plus nécessaire 
+        # car len(self.cached_specs) et len(self.data) sont synchronisés.
+        return self.cached_specs[idx]
 
 
 # ----------------------------
