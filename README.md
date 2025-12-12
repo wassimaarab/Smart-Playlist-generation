@@ -27,4 +27,7 @@ After downloading, place the dataset in a folder named Data at the root of the p
 2. Run `tsne_vis.py` to visualize the extracted vectors in 2D space.
 
 
+## Energy consumption
 
+1. Type `streamlit run conso.py`to display the csv of the energy usage for your training on your browser and the training plot/loss plot/tsne plot with the date 
+2. run `python run_with_emissions.py your_training_file.py --project name "your project name" ` 
