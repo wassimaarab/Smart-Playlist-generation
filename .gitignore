@@ -6,3 +6,20 @@ Viz/*.png
 
 # notebooks checkpoints
 .ipynb_checkpoints/
+
+*.pyc
+__pycache__/
+
+*.pt
+*.mp3
+*.wav
+*.npy
+*.pth
+*.mid
+*.csv
+*.txt
+*.html
+*.bat
+
+# datasets
+Data/
