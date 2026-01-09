@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, Subset
 from sklearn.model_selection import train_test_split
 from sklearn.manifold import TSNE
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, accuracy_score
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
@@ -93,24 +93,31 @@ def run_visu(dataset_dir, model_path):
             preds.extend(model(X).argmax(1).cpu().numpy())
             labels.extend(y.cpu().numpy())
             embs.extend(model(X, True).cpu().numpy())
-            
+    
+    # --- AJOUT: CALCUL ET AFFICHAGE DE L'ACCURACY ---
+    preds_arr = np.array(preds)
+    labels_arr = np.array(labels)
+    acc = np.mean(preds_arr == labels_arr)
+    print(f"\n🏆 Accuracy Test : {acc:.4f} ({acc*100:.2f}%)\n")
+    # -----------------------------------------------
+
     # Matrix
     cm = confusion_matrix(labels, preds)
     cm = cm.astype('float') / (cm.sum(axis=1)[:, np.newaxis] + 1e-6)
     plt.figure(figsize=(6,5))
     sns.heatmap(cm, annot=True, xticklabels=dataset.classes, yticklabels=dataset.classes, cmap='Blues')
-    plt.title("Confusion Matrix (4Q)")
+    plt.title(f"Confusion Matrix (Acc: {acc:.2f})") # J'ai aussi ajouté l'acc dans le titre
     plt.show()
     
     # t-SNE
     print("Calcul t-SNE...")
-    perp = 15#30 if len(embs) > 100 else 10
+    perp = 15 #30 if len(embs) > 100 else 10
     X2 = TSNE(n_components=2, perplexity=perp, init='pca', random_state=42).fit_transform(np.array(embs))
     
     plt.figure(figsize=(8,6))
     colors = ['red', 'orange', 'blue', 'green'] # Q1, Q2, Q3, Q4 approx
     for i, c in enumerate(dataset.classes):
-        m = np.array(labels) == i
+        m = labels_arr == i
         plt.scatter(X2[m,0], X2[m,1], label=c, color=colors[i], alpha=0.7)
     plt.legend(); plt.title("t-SNE 4Q"); plt.savefig("CNN/tsne_genre/tsne_4Q.png", dpi=300);plt.show()
 

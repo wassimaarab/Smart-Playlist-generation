@@ -79,7 +79,7 @@ class FourQDataset(Dataset):
             return self.__getitem__(np.random.randint(len(self.file_list)))
 
 # ----------------------------
-# 2. Modèle STANDARD (Sans BN, Sans Dropout)
+# 2. Modèle STANDARD
 # ----------------------------
 class TemporalCNN(nn.Module):
     def __init__(self, num_classes):
@@ -122,9 +122,9 @@ class TemporalCNN(nn.Module):
         return out
 
 # ----------------------------
-# 3. Main Training
+# 3. Main Training (Modifié: Early Stopping + Best Model)
 # ----------------------------
-def train(dataset_dir, epochs=30):
+def train(dataset_dir, epochs=100, patience=7):
     print(f"--- Initialisation Dataset sur {dataset_dir} ---")
     dataset = FourQDataset(dataset_dir)
     
@@ -148,9 +148,18 @@ def train(dataset_dir, epochs=30):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss()
     
+    # Historique pour les courbes
     history = {'t_loss': [], 'v_loss': [], 't_acc': [], 'v_acc': []}
     
+    # Variables pour Early Stopping et Sauvegarde
+    best_val_loss = float('inf')
+    early_stop_counter = 0
+    save_dir = "CNN/weights_4q"
+    if not os.path.exists(save_dir): os.makedirs(save_dir)
+    best_model_path = os.path.join(save_dir, "best_model_4q.pth")
+    
     for ep in range(epochs):
+        # --- TRAIN ---
         model.train()
         l_sum, c_sum, n = 0, 0, 0
         for X, y in loaders['train']:
@@ -162,8 +171,12 @@ def train(dataset_dir, epochs=30):
             optimizer.step()
             l_sum += loss.item()*len(y); c_sum += (out.argmax(1)==y).sum().item(); n += len(y)
         
-        history['t_loss'].append(l_sum/n); history['t_acc'].append(c_sum/n)
+        train_loss = l_sum/n
+        train_acc = c_sum/n
+        history['t_loss'].append(train_loss)
+        history['t_acc'].append(train_acc)
         
+        # --- VALIDATION ---
         model.eval()
         l_sum, c_sum, n = 0, 0, 0
         with torch.no_grad():
@@ -172,38 +185,92 @@ def train(dataset_dir, epochs=30):
                 out = model(X)
                 l_sum += criterion(out, y).item()*len(y); c_sum += (out.argmax(1)==y).sum().item(); n += len(y)
         
-        history['v_loss'].append(l_sum/n); history['v_acc'].append(c_sum/n)
-        print(f"Ep {ep+1:02d} | T_Loss:{history['t_loss'][-1]:.3f} Acc:{history['t_acc'][-1]:.3f} | V_Loss:{history['v_loss'][-1]:.3f} Acc:{history['v_acc'][-1]:.3f}")
+        val_loss = l_sum/n
+        val_acc = c_sum/n
+        history['v_loss'].append(val_loss)
+        history['v_acc'].append(val_acc)
         
-    # --- ÉVALUATION TEST FINAL (CE QUI MANQUAIT) ---
-    print("\n🏁 Évaluation finale sur le Test Set...")
+        print(f"Ep {ep+1:02d} | T_Loss:{train_loss:.3f} Acc:{train_acc:.3f} | V_Loss:{val_loss:.3f} Acc:{val_acc:.3f}")
+        
+        # --- CHECKPOINT & EARLY STOPPING ---
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            early_stop_counter = 0
+            torch.save(model.state_dict(), best_model_path)
+            print("  --> 💾 Meilleur modèle sauvegardé (Validation Loss améliorée).")
+        else:
+            early_stop_counter += 1
+            print(f"  --> Pas d'amélioration ({early_stop_counter}/{patience})")
+            
+        if early_stop_counter >= patience:
+            print("🛑 Arrêt anticipé (Early Stopping) activé.")
+            break
+            
+    # --- FIN DE L'ENTRAINEMENT ---
+    
+    # --- TRACÉ DES COURBES ---
+    print("\n📊 Génération des courbes...")
+    plt.figure(figsize=(12, 5))
+    
+    # Courbe de Loss
+    plt.subplot(1, 2, 1)
+    plt.plot(history['t_loss'], label='Train Loss', color='blue')
+    plt.plot(history['v_loss'], label='Val Loss', color='orange')
+    plt.title('Loss par époque')
+    plt.xlabel('Époques')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    
+    # Courbe d'Accuracy
+    plt.subplot(1, 2, 2)
+    plt.plot(history['t_acc'], label='Train Acc', color='blue')
+    plt.plot(history['v_acc'], label='Val Acc', color='orange')
+    plt.title('Accuracy par époque')
+    plt.xlabel('Époques')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig("CNN/training_curves.png") # Sauvegarde l'image
+    plt.show() # Affiche l'image
+    
+    # --- ÉVALUATION FINALE SUR TEST SET ---
+    print("\n🏁 Évaluation finale sur le Test Set (avec le MEILLEUR modèle)...")
+    
+    # IMPORTANT : On recharge les poids du meilleur modèle, pas le dernier !
+    model.load_state_dict(torch.load(best_model_path))
     model.eval()
+    
     test_correct = 0
     test_total = 0
+    
+    # On peut ajouter une matrice de confusion ici si on veut
+    all_preds = []
+    all_labels = []
+
     with torch.no_grad():
         for X, y in loaders['test']:
             X, y = X.to(device), y.to(device)
             out = model(X)
-            test_correct += (out.argmax(1) == y).sum().item()
+            preds = out.argmax(1)
+            
+            test_correct += (preds == y).sum().item()
             test_total += y.size(0)
             
-    print(f"🏆 Accuracy Test Final : {test_correct/test_total:.4f}")
-    # -----------------------------------------------
-
-    # Save & Plot
-    if not os.path.exists("CNN/weights_4q"): os.makedirs("CNN/weights_4q")
-    torch.save(model.state_dict(), "CNN/weights_4q/model_4q.pth")
-    print("Modèle sauvegardé : CNN/weights_4q/model_4q.pth")
-    
-    plt.figure(figsize=(10,4))
-    plt.subplot(1,2,1); plt.plot(history['t_loss'], label='Train'); plt.plot(history['v_loss'], label='Val'); plt.title('Loss'); plt.legend()
-    plt.subplot(1,2,2); plt.plot(history['t_acc'], label='Train'); plt.plot(history['v_acc'], label='Val'); plt.title('Accuracy'); plt.legend()
-    plt.show()
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(y.cpu().numpy())
+            
+    test_acc = test_correct/test_total
+    print(f"🏆 Accuracy Test Final : {test_acc:.4f}")
+    print(f"📁 Modèle sauvegardé sous : {best_model_path}")
+    print(f"📉 Courbes sauvegardées sous : CNN/training_curves.png")
 
 if __name__ == "__main__":
     DATA_DIR = "4Q/MER Audio" 
     
     if os.path.exists(DATA_DIR):
-        train(DATA_DIR, epochs=50)
+        train(DATA_DIR, epochs=100, patience=10) # Patience augmentée à 10
     else:
         print(f"❌ Dossier introuvable : {DATA_DIR}")

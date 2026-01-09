@@ -70,7 +70,7 @@ class RegressionCNN(nn.Module):
 def evaluate_with_tsne():
     ROOT_DIR = "DEAM_Regression"
     # Utilise le bon fichier selon ton entraînement précédent
-    MODEL_PATH = "CNN/weights_balanced/best_reg_model.pth" 
+    MODEL_PATH = "CNN/weights_balanced/best_reg_model_da.pth" 
     CSV_PATH = os.path.join(ROOT_DIR, "metadata.csv")
     
     if not os.path.exists(MODEL_PATH):

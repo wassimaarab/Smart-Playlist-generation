@@ -111,7 +111,6 @@ class RegressionDataset(Dataset):
         try:
             y, sr = librosa.load(path, sr=self.sr, duration=self.duration)
             
-            # Augmentation
             if self.augment:
                 if np.random.rand() < 0.5: y = y + 0.005 * np.random.randn(len(y))
                 if np.random.rand() < 0.5: 
@@ -128,7 +127,6 @@ class RegressionDataset(Dataset):
             if S.shape[1] < self.target_len: S = np.pad(S, ((0,0), (0, self.target_len - S.shape[1])))
             else: S = S[:, :self.target_len]
             
-            # SpecAugment
             if self.augment and np.random.rand() < 0.5:
                 f_mask = np.random.randint(5, 15)
                 f_pos = np.random.randint(0, self.n_mels - f_mask)
@@ -136,7 +134,6 @@ class RegressionDataset(Dataset):
 
             X = torch.tensor(S, dtype=torch.float32).unsqueeze(0)
             
-            # Sauvegarde cache uniquement si image propre
             if not self.augment: torch.save(X, cache_path)
             return X, target
             
@@ -160,7 +157,7 @@ class RegressionCNN(nn.Module):
         
         self.fc1 = nn.Linear(512*3, 2048)
         self.fc2 = nn.Linear(2048, 2048)
-        self.fc3 = nn.Linear(2048, 2) # Sortie 2 neurones
+        self.fc3 = nn.Linear(2048, 2)
         self.dropout = nn.Dropout(0.5)
         
     def forward(self, x, return_embedding=False):
@@ -181,16 +178,15 @@ class RegressionCNN(nn.Module):
         return self.fc3(emb)
 
 # ============================================================================
-# 4. TRAINING LOOP
+# 4. TRAINING LOOP (Avec Train R2 & Val R2)
 # ============================================================================
-def train_regression(root_dir, epochs=70):
+def train_regression(root_dir, epochs=70, patience=10):
     df_meta = prepare_deam_regression("deam", root_dir)
     
     idx = np.arange(len(df_meta))
     train_idx, test_idx = train_test_split(idx, test_size=0.15, random_state=42)
     train_idx, val_idx = train_test_split(train_idx, test_size=0.15, random_state=42)
     
-    # Train avec Augmentation
     train_ds = RegressionDataset(root_dir, df_meta.iloc[train_idx], augment=True)
     val_ds = RegressionDataset(root_dir, df_meta.iloc[val_idx], augment=False)
     test_ds = RegressionDataset(root_dir, df_meta.iloc[test_idx], augment=False)
@@ -203,54 +199,81 @@ def train_regression(root_dir, epochs=70):
     }
     
     model = RegressionCNN().to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=1e-6, weight_decay=1e-3)
-    crit = nn.MSELoss() # Perte pour régression
+    optim = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-3)
+    crit = nn.MSELoss() 
     
-    H = {'loss':[], 'val_loss':[], 'r2':[]}
-    best_loss = float('inf') # Pour chercher la perte minimale
+    # Ajout de 'train_r2' dans l'historique
+    H = {'loss':[], 'val_loss':[], 'train_r2':[], 'val_r2':[]}
+    
+    best_loss = float('inf') 
+    early_stop_counter = 0
     model_path = "CNN/weights_balanced/best_reg_model.pth"
     
     print(f"\n🚀 Start Regression Training ({epochs} Epochs)...")
     
     for ep in range(epochs):
+        # --- TRAIN ---
         model.train()
         l_sum = 0
+        train_preds, train_targs = [], []
+        
         for X, y in loaders['train']:
             X, y = X.to(device), y.to(device)
-            optim.zero_grad(); out = model(X); loss = crit(out, y)
-            loss.backward(); optim.step()
+            optim.zero_grad()
+            out = model(X)
+            loss = crit(out, y)
+            loss.backward()
+            optim.step()
             l_sum += loss.item()
+            
+            # On stocke pour le R2
+            train_preds.append(out.detach().cpu().numpy())
+            train_targs.append(y.detach().cpu().numpy())
         
         avg_loss = l_sum / len(loaders['train'])
-        H['loss'].append(avg_loss)
+        train_r2 = r2_score(np.vstack(train_targs), np.vstack(train_preds)) # Calcul du R2 Train
         
+        H['loss'].append(avg_loss)
+        H['train_r2'].append(train_r2)
+        
+        # --- VALIDATION ---
         model.eval()
-        v_l_sum = 0; all_preds, all_targs = [], []
+        v_l_sum = 0
+        val_preds, val_targs = [], []
         with torch.no_grad():
             for X, y in loaders['val']:
                 X, y = X.to(device), y.to(device)
                 out = model(X)
                 v_l_sum += crit(out, y).item()
-                all_preds.append(out.cpu().numpy()); all_targs.append(y.cpu().numpy())
+                val_preds.append(out.cpu().numpy())
+                val_targs.append(y.cpu().numpy())
         
         avg_v_loss = v_l_sum / len(loaders['val'])
-        H['val_loss'].append(avg_v_loss)
-        r2 = r2_score(np.vstack(all_targs), np.vstack(all_preds))
-        H['r2'].append(r2)
+        val_r2 = r2_score(np.vstack(val_targs), np.vstack(val_preds))
         
-        # === SAUVEGARDE DU MEILLEUR ===
+        H['val_loss'].append(avg_v_loss)
+        H['val_r2'].append(val_r2)
+        
+        # --- EARLY STOPPING CHECK ---
         save_msg = ""
         if avg_v_loss < best_loss:
             best_loss = avg_v_loss
+            early_stop_counter = 0 
             torch.save(model.state_dict(), model_path)
             save_msg = "💾 New Best!"
+        else:
+            early_stop_counter += 1
             
-        print(f"Ep {ep+1:02d} | Loss: {avg_loss:.4f} | Val MSE: {avg_v_loss:.4f} | R2: {r2:.3f} {save_msg}")
+        print(f"Ep {ep+1:02d} | Loss: {avg_loss:.4f} | R2: {train_r2:.3f} || Val Loss: {avg_v_loss:.4f} | Val R2: {val_r2:.3f} {save_msg}")
+        
+        if early_stop_counter >= patience:
+            print(f"🛑 Arrêt anticipé après {ep+1} époques.")
+            break
 
     # ============================================================
-    # 5. EVALUATION
+    # 5. EVALUATION FINALE
     # ============================================================
-    print("\n🏁 Test Final (Chargement Meilleur Modèle)...")
+    print("\n🏁 Test Final...")
     model.load_state_dict(torch.load(model_path))
     model.eval()
     
@@ -266,24 +289,48 @@ def train_regression(root_dir, epochs=70):
     final_r2 = r2_score(targets, preds)
     print(f"🏆 Test R2 Score : {final_r2:.4f}")
     
+    # --- COURBES (MODIFIÉES POUR AVOIR TRAIN ET VAL) ---
     plt.figure(figsize=(12,5))
-    plt.subplot(1,2,1); plt.plot(H['loss'], label='Train'); plt.plot(H['val_loss'], label='Val'); plt.title('MSE Loss'); plt.legend()
-    plt.subplot(1,2,2); plt.plot(H['r2'], label='R2 Score'); plt.title('R2 Score'); plt.legend()
+    
+    # Loss Plot
+    plt.subplot(1,2,1)
+    plt.plot(H['loss'], label='Train Loss', color='blue')
+    plt.plot(H['val_loss'], label='Val Loss', color='orange')
+    plt.title('MSE Loss (Train vs Val)')
+    plt.legend()
+    plt.grid(True)
+    
+    # R2 Plot (C'est ici qu'on a ajouté la courbe Train)
+    plt.subplot(1,2,2)
+    plt.plot(H['train_r2'], label='Train R2', color='blue', linestyle='--')
+    plt.plot(H['val_r2'], label='Val R2', color='orange')
+    plt.title('R2 Score (Train vs Val)')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig('CNN/tsne_plot/regression_curves.png')
     plt.show()
     
+    # Scatter Plot
     plt.figure(figsize=(6,6))
     plt.scatter(targets[:,0], preds[:,0], alpha=0.5, label='Valence', color='blue')
     plt.scatter(targets[:,1], preds[:,1], alpha=0.5, label='Arousal', color='red')
-    plt.plot([0,1], [0,1], 'k--'); plt.xlabel("Vrai"); plt.ylabel("Prédit"); plt.title("Régression"); plt.legend(); plt.show()
-    
+    plt.plot([0,1], [0,1], 'k--', alpha=0.7)
+    plt.xlabel("Réel"); plt.ylabel("Prédit"); plt.legend(); plt.grid(True)
+    plt.savefig('CNN/tsne_plot/regression_scatter.png')
+    plt.show()
+
+    # t-SNE
     print("🎨 Calcul t-SNE...")
-    med_v = np.median(targets[:, 0]); med_a = np.median(targets[:, 1])
-    colors = []; labels = []
+    # On détermine les quadrants pour les couleurs
+    colors, labels = [], []
     for i in range(len(targets)):
         v, a = targets[i]
-        if v >= med_v and a >= med_a: l="Q1 Happy"; c="red"
-        elif v < med_v and a >= med_a: l="Q2 Angry"; c="orange"
-        elif v < med_v and a < med_a: l="Q3 Sad"; c="blue"
+        # Seuils à 0.5 car normalisé
+        if v >= 0.5 and a >= 0.5: l="Q1 Happy"; c="red"
+        elif v < 0.5 and a >= 0.5: l="Q2 Angry"; c="orange"
+        elif v < 0.5 and a < 0.5: l="Q3 Sad"; c="blue"
         else: l="Q4 Relax"; c="green"
         colors.append(c); labels.append(l)
         
@@ -292,9 +339,14 @@ def train_regression(root_dir, epochs=70):
     unique_labels = list(set(labels))
     for ul in sorted(unique_labels):
         mask = np.array(labels) == ul
-        c = colors[np.where(mask)[0][0]]
-        plt.scatter(tsne[mask, 0], tsne[mask, 1], c=c, label=ul, alpha=0.7)
-    plt.title(f"t-SNE Régression - R2={final_r2:.2f}"); plt.legend(); plt.savefig('CNN/tsne_plot/tsne_regression.png'); plt.show()
+        if np.any(mask):
+            c = colors[np.where(mask)[0][0]]
+            plt.scatter(tsne[mask, 0], tsne[mask, 1], c=c, label=ul, alpha=0.7)
+            
+    plt.title(f"t-SNE Embedding (Regression) - Test R2={final_r2:.2f}")
+    plt.legend()
+    plt.savefig('CNN/tsne_plot/tsne_regression.png')
+    plt.show()
 
 if __name__ == "__main__":
     if not os.path.exists("CNN/weights_balanced"): os.makedirs("CNN/weights_balanced")
