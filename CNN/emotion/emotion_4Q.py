@@ -84,41 +84,50 @@ class FourQDataset(Dataset):
 class TemporalCNN(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 128, kernel_size=(1,4), padding=1)
-        self.conv2 = nn.Conv2d(128, 256, kernel_size=(1,4), padding=1)
-        self.conv3 = nn.Conv2d(256, 256, kernel_size=(1,4), padding=1)
-        self.conv4 = nn.Conv2d(256, 512, kernel_size=(1,4), padding=1)
         
-        self.pool4x = nn.MaxPool2d(kernel_size=(4))
-        self.pool2x = nn.MaxPool2d(kernel_size=(2))
+        # --- BLOC 1 : EXTRACTION DE FEATURES (IDENTIQUE AU TRONC COMMUN) ---
+        self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
+        self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
+        self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
+        self.conv4 = nn.Conv2d(256, 512, (1,4), padding=1)
         
+        self.bn1 = nn.BatchNorm2d(128); self.bn2 = nn.BatchNorm2d(256)
+        self.bn3 = nn.BatchNorm2d(256); self.bn4 = nn.BatchNorm2d(512)
+        
+        self.pool4x = nn.MaxPool2d(4)
+        self.pool2x = nn.MaxPool2d(2)
+        
+        # --- BLOC 2 : CLASSIFICATION (ANCIENNE "TÊTE GENRE" INTÉGRÉE) ---
+        # FC Shared (512*3 -> 2048)
         self.fc1 = nn.Linear(512*3, 2048)
-        self.fc2 = nn.Linear(2048, 2048)
-        self.fc3 = nn.Linear(2048, num_classes)
         
-    def forward(self, x, return_embedding=False):
-        x = F.relu(self.conv1(x))
-        x = self.pool4x(x)
-        x = F.relu(self.conv2(x))
-        x = self.pool2x(x)
-        x = F.relu(self.conv3(x))
-        x = self.pool2x(x)
-        x = F.relu(self.conv4(x))
+        # Partie qui était dans la "tête genre" (2048 -> 1024 -> num_genres)
+        self.fc2 = nn.Linear(2048, 1024)
+        self.fc3 = nn.Linear(1024, num_classes)
         
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        # 1. Convolutions
+        x = self.pool4x(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool2x(F.relu(self.bn2(self.conv2(x))))
+        x = self.pool2x(F.relu(self.bn3(self.conv3(x))))
+        x = F.relu(self.bn4(self.conv4(x))) 
+        
+        # 2. Global Statistics Pooling (Mean, Max, L2)
         mean = x.mean(dim=2)
         max_ = x.max(dim=2).values
         l2 = torch.sqrt((x**2).sum(dim=2))
+        x = torch.cat([mean, max_, l2], dim=1).mean(dim=2) # [Batch, 512*3]
         
-        x = torch.cat([mean, max_, l2], dim=1)
-        x = x.mean(dim=2)
+        # 3. Dense Layers (Linéaire)
+        x = F.relu(self.fc1(x))      # -> 2048
+        x = self.dropout(x)
         
-        x = F.relu(self.fc1(x))
-        embedding = F.relu(self.fc2(x))
+        x = F.relu(self.fc2(x))      # -> 1024
+        x = self.dropout(x)
         
-        if return_embedding:
-            return embedding
-            
-        out = self.fc3(embedding)
+        out = self.fc3(x)            # -> num_genres
         return out
 
 # ----------------------------

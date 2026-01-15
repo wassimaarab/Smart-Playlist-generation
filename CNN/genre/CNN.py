@@ -12,165 +12,161 @@ import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore")
 
-# ----------------------------
-# Dataset
-# ----------------------------
+# ============================================================================
+# 1. MODÈLE MONOTÂCHE (MÊME ARCHITECTURE, SANS BRANCHE ÉMOTION)
+# ============================================================================
+class TemporalCNN(nn.Module):
+    def __init__(self, num_genres):
+        super().__init__()
+        
+        # --- BLOC 1 : EXTRACTION DE FEATURES (IDENTIQUE AU TRONC COMMUN) ---
+        self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
+        self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
+        self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
+        self.conv4 = nn.Conv2d(256, 512, (1,4), padding=1)
+        
+        self.bn1 = nn.BatchNorm2d(128); self.bn2 = nn.BatchNorm2d(256)
+        self.bn3 = nn.BatchNorm2d(256); self.bn4 = nn.BatchNorm2d(512)
+        
+        self.pool4x = nn.MaxPool2d(4)
+        self.pool2x = nn.MaxPool2d(2)
+        
+        # --- BLOC 2 : CLASSIFICATION (ANCIENNE "TÊTE GENRE" INTÉGRÉE) ---
+        # FC Shared (512*3 -> 2048)
+        self.fc1 = nn.Linear(512*3, 2048)
+        
+        # Partie qui était dans la "tête genre" (2048 -> 1024 -> num_genres)
+        self.fc2 = nn.Linear(2048, 1024)
+        self.fc3 = nn.Linear(1024, num_genres)
+        
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        # 1. Convolutions
+        x = self.pool4x(F.relu(self.bn1(self.conv1(x))))
+        x = self.pool2x(F.relu(self.bn2(self.conv2(x))))
+        x = self.pool2x(F.relu(self.bn3(self.conv3(x))))
+        x = F.relu(self.bn4(self.conv4(x))) 
+        
+        # 2. Global Statistics Pooling (Mean, Max, L2)
+        mean = x.mean(dim=2)
+        max_ = x.max(dim=2).values
+        l2 = torch.sqrt((x**2).sum(dim=2))
+        x = torch.cat([mean, max_, l2], dim=1).mean(dim=2) # [Batch, 512*3]
+        
+        # 3. Dense Layers (Linéaire)
+        x = F.relu(self.fc1(x))      # -> 2048
+        x = self.dropout(x)
+        
+        x = F.relu(self.fc2(x))      # -> 1024
+        x = self.dropout(x)
+        
+        out = self.fc3(x)            # -> num_genres
+        return out
+
+# ============================================================================
+# 2. DATASET
+# ============================================================================
 class AudioDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
         self.original_data = pd.read_csv(csv_file)
         self.audio_dir = audio_dir
-        self.sr = sr
-        self.n_mels = n_mels
-        self.duration = duration
+        self.sr = sr; self.n_mels = n_mels; self.duration = duration
         
-        # Initialisation temporaire pour structure
         cat = pd.Categorical(self.original_data['label'])
         self.label_to_index = {cat.categories[i]: i for i in range(len(cat.categories))}
 
         self.cached_specs = []
-        # Le DataFrame 'self.data' contient DÉSORMAIS uniquement les échantillons valides
         self.data = self.load_data_to_cache() 
         
-        # Les labels et mappings sont basés sur les données validées
         cat = pd.Categorical(self.data['label'])
         self.labels = cat.codes
         self.label_to_index = {cat.categories[i]: i for i in range(len(cat.categories))}
-        self.index_to_label = {i: cat.categories[i] for i in range(len(cat.categories))}
 
     def __len__(self):
         return len(self.cached_specs)
 
     def load_data_to_cache(self):
         print("Mise en cache des spectrogrammes...")
-        valid_indices_original_df = [] 
-        
+        valid_indices = [] 
         for idx in range(len(self.original_data)):
-            label_str = self.original_data.loc[idx, 'label']
-            filename = self.original_data.loc[idx, 'filename']
-            path = os.path.join(self.audio_dir, label_str, filename)
-
             try:
+                label_str = self.original_data.loc[idx, 'label']
+                filename = self.original_data.loc[idx, 'filename']
+                path = os.path.join(self.audio_dir, label_str, filename)
+
                 y, sr = librosa.load(path, sr=self.sr, duration=self.duration)
-                if y.size == 0: raise ValueError("Audio vide")
-                    
-                S = librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels)
-                S_dB = librosa.power_to_db(S, ref=np.max)
+                if len(y) < 1000: continue
+                S = librosa.power_to_db(librosa.feature.melspectrogram(y=y, sr=self.sr, n_mels=self.n_mels), ref=np.max)
+                S_norm = (S - S.min()) / (S.max() - S.min() + 1e-6)
                 
-                denom = S_dB.max() - S_dB.min()
-                if denom == 0: raise ValueError("Silence")
-                    
-                S_norm = (S_dB - S_dB.min()) / denom
+                tgt_len = int(np.ceil(self.duration * self.sr / 512))
+                if S_norm.shape[1] < tgt_len: 
+                    S_norm = np.pad(S_norm, ((0,0), (0, tgt_len - S_norm.shape[1])))
+                else: S_norm = S_norm[:, :tgt_len]
                 
                 X = torch.tensor(S_norm, dtype=torch.float32).unsqueeze(0)
-                y_label_idx = self.label_to_index[label_str]
-                y = torch.tensor(y_label_idx, dtype=torch.long)
+                y_idx = self.label_to_index[label_str]
                 
-                self.cached_specs.append((X, y))
-                valid_indices_original_df.append(idx)
-                
-            except Exception as e:
-                continue
-                
-        print(f"Mise en cache terminée. {len(self.cached_specs)} échantillons chargés.")
-        return self.original_data.iloc[valid_indices_original_df].reset_index(drop=True)
+                self.cached_specs.append((X, torch.tensor(y_idx, dtype=torch.long)))
+                valid_indices.append(idx)
+            except Exception: continue
+        print(f"Terminé : {len(self.cached_specs)} fichiers.")
+        return self.original_data.iloc[valid_indices].reset_index(drop=True)
 
     def __getitem__(self, idx):
         return self.cached_specs[idx]
 
-
-# ----------------------------
-# Stratified split & Loader
-# ----------------------------
+# ============================================================================
+# 3. LOADER & SPLIT
+# ============================================================================
 def stratified_split(dataset, test_size=0.15, val_size=0.15, random_state=42):
     df = dataset.data
-    train_val_idx, test_idx = train_test_split(
-        np.arange(len(df)), test_size=test_size, stratify=df['label'], random_state=random_state
-    )
-    train_idx, val_idx = train_test_split(
-        train_val_idx, test_size=val_size, stratify=df.loc[train_val_idx, 'label'], random_state=random_state
-    )
+    train_val_idx, test_idx = train_test_split(np.arange(len(df)), test_size=test_size, stratify=df['label'], random_state=random_state)
+    train_idx, val_idx = train_test_split(train_val_idx, test_size=val_size, stratify=df.loc[train_val_idx, 'label'], random_state=random_state)
     return train_idx, val_idx, test_idx
 
 def get_loaders(dataset, batch_size=16):
     train_idx, val_idx, test_idx = stratified_split(dataset)
-    train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(Subset(dataset, val_idx), batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(Subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
-    return train_loader, val_loader, test_loader, train_idx, val_idx, test_idx
+    train_loader = DataLoader(Subset(dataset, train_idx), batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(Subset(dataset, val_idx), batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(Subset(dataset, test_idx), batch_size=batch_size, shuffle=False, num_workers=0)
+    return train_loader, val_loader, test_loader
 
-
-# ----------------------------
-# CNN Model
-# ----------------------------
-class TemporalCNN(nn.Module):
-    def __init__(self, num_classes=10):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 128, kernel_size=(1,4), padding=1)
-        self.conv2 = nn.Conv2d(128, 256, kernel_size=(1,4), padding=1)
-        self.conv3 = nn.Conv2d(256, 256, kernel_size=(1,4), padding=1)
-        self.conv4 = nn.Conv2d(256, 512, kernel_size=(1,4), padding=1)
-        self.pool4x = nn.MaxPool2d(kernel_size=(4))
-        self.pool2x = nn.MaxPool2d(kernel_size=(2))
-        self.fc1 = nn.Linear(512*3, 2048)
-        self.fc2 = nn.Linear(2048, 2048)
-        self.fc3 = nn.Linear(2048, num_classes)
-        
-    def forward(self, x, return_embedding=False):
-        x = F.relu(self.conv1(x))
-        x = self.pool4x(x)
-        x = F.relu(self.conv2(x))
-        x = self.pool2x(x)
-        x = F.relu(self.conv3(x))
-        x = self.pool2x(x)
-        x = F.relu(self.conv4(x))
-        mean = x.mean(dim=2)
-        max_ = x.max(dim=2).values
-        l2 = torch.sqrt((x**2).sum(dim=2))
-        x = torch.cat([mean, max_, l2], dim=1)
-        x = x.mean(dim=2)
-        x = F.relu(self.fc1(x))
-        embedding = F.relu(self.fc2(x))
-        out = self.fc3(embedding)
-        if return_embedding: return embedding
-        return out
-
-
-# ----------------------------
-# Entraînement (Modifié avec Early Stopping + Best Model)
-# ----------------------------
+# ============================================================================
+# 4. ENTRAÎNEMENT
+# ============================================================================
 def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/weights/temporal_cnn_gtzan.pth", patience=7):
-    # Création du dossier de sauvegarde si inexistant
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     dataset = AudioDataset(csv_file, audio_dir, duration=28)
-    train_loader, valid_loader, test_loader, _, _, _ = get_loaders(dataset, batch_size=batch_size)
+    train_loader, valid_loader, test_loader = get_loaders(dataset, batch_size=batch_size)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_classes = len(dataset.label_to_index)
     
-    print(f"🚀 Démarrage entraînement sur {device} | Classes: {num_classes}")
+    print(f"🚀 Démarrage entraînement (Monotâche) sur {device} | Classes: {num_classes}")
     
-    model = TemporalCNN(num_classes=num_classes).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # Modèle monotâche
+    model = TemporalCNN(num_genres=num_classes).to(device)
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss()
 
-    # Historique
     train_losses, val_losses = [], []
     train_accs, val_accs = [], []
     
-    # Variables Early Stopping & Best Model
     best_val_loss = float('inf')
     early_stop_counter = 0
-    best_model_path = save_path.replace('.pth', '_best.pth') # ex: cnn_best.pth
+    best_model_path = save_path.replace('.pth', '_best.pth')
 
     for epoch in range(epochs):
-        # ---- TRAIN ----
         model.train()
         train_loss, total_correct, total_samples = 0,0,0
         for X, y in train_loader:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
-            outputs = model(X)
+            outputs = model(X) # Appel simple, plus de 'task='
             loss = criterion(outputs, y)
             loss.backward()
             optimizer.step()
@@ -180,7 +176,6 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
         train_loss /= total_samples
         train_acc = total_correct / total_samples
 
-        # ---- VALIDATION ----
         model.eval()
         val_loss, val_correct, val_total = 0, 0, 0
         with torch.no_grad():
@@ -195,35 +190,27 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
         val_loss /= val_total
         val_acc = val_correct / val_total
 
-        # Sauvegarde historique
-        train_losses.append(train_loss)
-        val_losses.append(val_loss)
-        train_accs.append(train_acc)
-        val_accs.append(val_acc)
+        train_losses.append(train_loss); val_losses.append(val_loss)
+        train_accs.append(train_acc); val_accs.append(val_acc)
 
-        print(f"Epoch {epoch+1:02d}/{epochs} | "
-              f"T_Loss: {train_loss:.4f} T_Acc: {train_acc:.4f} | "
-              f"V_Loss: {val_loss:.4f} V_Acc: {val_acc:.4f}")
+        print(f"Epoch {epoch+1:02d}/{epochs} | T_Loss: {train_loss:.4f} T_Acc: {train_acc:.4f} | V_Loss: {val_loss:.4f} V_Acc: {val_acc:.4f}")
         
-        # ---- LOGIQUE EARLY STOPPING & SAVE BEST ----
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             early_stop_counter = 0
             torch.save(model.state_dict(), best_model_path)
-            print(f"  --> ⭐ Nouveau meilleur modèle sauvegardé (Val Loss: {val_loss:.4f})")
+            print(f"  --> ⭐ Saved Best")
         else:
             early_stop_counter += 1
-            print(f"  --> Pas d'amélioration ({early_stop_counter}/{patience})")
+            print(f"  --> No Improv ({early_stop_counter}/{patience})")
             
         if early_stop_counter >= patience:
-            print(f"🛑 Arrêt anticipé (Early Stopping) activé après {epoch+1} époques.")
-            break
+            print("🛑 Early Stopping."); break
 
-    # ---- TEST FINAL (Avec le MEILLEUR modèle) ----
-    print("\n🏁 Chargement du meilleur modèle pour le Test...")
-    model.load_state_dict(torch.load(best_model_path)) # Rechargement critique !
+    # Test final
+    print("\n🏁 Test sur le meilleur modèle...")
+    model.load_state_dict(torch.load(best_model_path))
     model.eval()
-    
     test_loss, test_correct, test_total = 0, 0, 0
     with torch.no_grad():
         for Xt, yt in test_loader:
@@ -234,62 +221,24 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
             preds = outputs.argmax(1)
             test_correct += (preds == yt).sum().item()
             test_total += yt.size(0)
-    test_loss /= test_total
-    test_acc = test_correct / test_total
-
-    print(f"🏆 RÉSULTAT FINAL (TEST) : Loss: {test_loss:.4f} - Accuracy: {test_acc:.4f}")
-
-    # On sauvegarde le dernier état comme "modèle final" si besoin, ou on renomme le best
+            
+    print(f"🏆 RÉSULTAT FINAL (TEST) : Loss: {test_loss/test_total:.4f} - Accuracy: {test_correct/test_total:.4f}")
     torch.save(model.state_dict(), save_path)
-    print(f"Modèle final (meilleur) sauvegardé sous : {save_path}")
 
-    # ----------------------------
-    # Tracé des courbes
-    # ----------------------------
-    # Création du dossier plot si inexistant
+    # Plot
     plot_dir = "CNN/training_plot"
     os.makedirs(plot_dir, exist_ok=True)
-    
     epochs_range = range(1, len(train_losses) + 1)
     plt.figure(figsize=(12,5))
+    plt.subplot(1, 2, 1); plt.plot(epochs_range, train_losses, label='Train'); plt.plot(epochs_range, val_losses, label='Val'); plt.title('Loss'); plt.legend(); plt.grid(True)
+    plt.subplot(1, 2, 2); plt.plot(epochs_range, train_accs, label='Train'); plt.plot(epochs_range, val_accs, label='Val'); plt.title('Accuracy'); plt.legend(); plt.grid(True)
+    plt.savefig(os.path.join(plot_dir, "training_curves_monotask.png")); plt.show()
 
-    # Loss
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs_range, train_losses, label='Train Loss')
-    plt.plot(epochs_range, val_losses, label='Val Loss')
-    plt.xlabel('Époques')
-    plt.ylabel('Loss')
-    plt.title('Courbes de perte')
-    plt.legend()
-    plt.grid(True)
+    return model
 
-    # Accuracy
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs_range, train_accs, label='Train Acc')
-    plt.plot(epochs_range, val_accs, label='Val Acc')
-    plt.xlabel('Époques')
-    plt.ylabel('Accuracy')
-    plt.title('Courbes de précision')
-    plt.legend()
-    plt.grid(True)
-
-    plt.tight_layout()
-    plot_path = os.path.join(plot_dir, "training_curves_best.png")
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.show()
-    print(f"Graphique sauvegardé : {plot_path}")
-
-    return model, test_loader, dataset
-
-# ----------------------------
-# Main
-# ----------------------------
 if __name__ == "__main__":
     csv_file = 'Data/features_30_sec.csv'
     audio_dir = 'Data/genres_original/'
-    
     if os.path.exists(csv_file) and os.path.exists(audio_dir):
-        # Augmentation de la patience à 10 pour laisser le temps au modèle d'apprendre
-        model, test_loader, dataset = train_model(csv_file, audio_dir, epochs=100, patience=10)
-    else:
-        print("❌ Erreur : Fichiers de données introuvables.")
+        train_model(csv_file, audio_dir, epochs=100, patience=10)
+    else: print("❌ Erreur : Fichiers de données introuvables.")

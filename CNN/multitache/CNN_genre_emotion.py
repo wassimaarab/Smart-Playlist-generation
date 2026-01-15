@@ -166,7 +166,7 @@ def train_and_evaluate():
         
         # --- GENRE (Vitesse Boostée) ---
         # On peut le laisser à 1e-4 ou le pousser un peu (ex: 5e-4) pour qu'il apprenne vite
-        {'params': model.head_genre.parameters(), 'lr': 5e-4}, 
+        {'params': model.head_genre.parameters(), 'lr': 1e-4}, 
         
         # --- EMOTION (FREIN À MAIN) ---
         # On divise le learning rate par 10 ou 20 !
