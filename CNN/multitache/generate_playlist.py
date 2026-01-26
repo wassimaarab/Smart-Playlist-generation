@@ -20,7 +20,6 @@ print(f"🖥️ Device utilisé : {device}")
 # 1. UTILITAIRES & MODÈLE
 # ============================================================================
 def ensure_fixed_length(tensor, target_len=1292):
-    """Force une taille fixe pour éviter les erreurs de batching"""
     current_len = tensor.shape[2]
     if current_len > target_len:
         return tensor[:, :, :target_len]
@@ -61,7 +60,7 @@ class MultiTaskCNN(nn.Module):
         elif task == 'emotion': return self.head_emotion(self.dropout(emb))
 
 # ============================================================================
-# 2. DATASETS (ROBUSTES AUX ERREURS)
+# 2. DATASETS (AVEC LOGIQUE ÉMOTIONNELLE)
 # ============================================================================
 class GTZANFullDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
@@ -76,10 +75,7 @@ class GTZANFullDataset(Dataset):
             fpath = os.path.join(audio_dir, row['label'], row['filename'])
             if os.path.exists(fpath):
                 self.data.append({
-                    'path': fpath,
-                    'label': row['label'],
-                    'filename': row['filename'],
-                    'source': 'GTZAN'
+                    'path': fpath, 'label': row['label'], 'filename': row['filename'], 'source': 'GTZAN'
                 })
             
     def __len__(self): return len(self.data)
@@ -92,10 +88,8 @@ class GTZANFullDataset(Dataset):
             S_norm = (S - S.min()) / (S.max() - S.min() + 1e-6)
             X = torch.tensor(S_norm, dtype=torch.float32).unsqueeze(0)
             X = ensure_fixed_length(X, self.target_len)
-            
             return {'tensor': X, 'label': item['label'], 'filename': item['filename'], 'source': 'GTZAN'}
-        except Exception as e:
-            # En cas de fichier corrompu (ex: jazz.00054.wav), on en prend un autre
+        except:
             new_idx = np.random.randint(len(self.data))
             return self.__getitem__(new_idx)
 
@@ -112,10 +106,8 @@ class DEAMCachedFullDataset(Dataset):
             cache_path = os.path.join(self.cache_dir, f"{row['filename']}.pt")
             if os.path.exists(cache_path):
                 self.valid_files.append({
-                    'path': cache_path,
-                    'filename': row['filename'],
-                    'valence': row['valence'],
-                    'arousal': row['arousal']
+                    'path': cache_path, 'filename': row['filename'],
+                    'valence': row['valence'], 'arousal': row['arousal']
                 })
 
     def __len__(self): return len(self.valid_files)
@@ -125,61 +117,64 @@ class DEAMCachedFullDataset(Dataset):
             item = self.valid_files[idx]
             X = torch.load(item['path'])
             X = ensure_fixed_length(X, self.target_len)
-            return {'tensor': X, 'label': 'DEAM_Emotion', 'filename': item['filename'], 'source': 'DEAM'}
+            
+            # --- CALCUL DU LABEL ÉMOTIONNEL ---
+            v, a = item['valence'], item['arousal']
+            # Seuil standard DEAM = 5.0 (l'échelle est 1-9)
+            if v >= 5.0 and a >= 5.0:
+                emo_label = "Q1 Happy"
+            elif v < 5.0 and a >= 5.0:
+                emo_label = "Q2 Angry"
+            elif v < 5.0 and a < 5.0:
+                emo_label = "Q3 Sad"
+            else:
+                emo_label = "Q4 Relax"
+            
+            return {'tensor': X, 'label': emo_label, 'filename': item['filename'], 'source': 'DEAM'}
         except:
             new_idx = np.random.randint(len(self.valid_files))
             return self.__getitem__(new_idx)
 
 # ============================================================================
-# 3. EXTRACTION, GENERATION VISUELLE ET AFFICHAGE
+# 3. EXTRACTION ET ANALYSE
 # ============================================================================
 def extract_test_embeddings(model, dataloader):
     model.eval()
-    embeddings = []
-    metadata = []
+    embeddings, metadata = [], []
     
     print("\n🚀 Extraction des embeddings sur le Test Set...")
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
             inputs = batch['tensor'].to(device)
-            emb = model(inputs, task='embedding')
+            emb = model(inputs, task='embedding').cpu().numpy()
             
-            emb_np = emb.cpu().numpy()
-            
-            for j in range(len(emb_np)):
-                embeddings.append(emb_np[j])
+            for j in range(len(emb)):
+                embeddings.append(emb[j])
                 metadata.append({
                     'label': batch['label'][j],
                     'filename': batch['filename'][j],
                     'source': batch['source'][j]
                 })
-            
             print(f"Batch {i+1}/{len(dataloader)} traité...", end='\r')
             
     return np.array(embeddings), pd.DataFrame(metadata)
 
 def generate_and_analyze(embeddings, meta_df):
-    # 1. Calcul t-SNE (D'ABORD)
-    print("\n\n🎨 Calcul du t-SNE (Projection 2048D -> 2D)...")
+    print("\n\n🎨 Calcul du t-SNE...")
     tsne = TSNE(n_components=2, perplexity=30, random_state=42, init='pca')
     coords = tsne.fit_transform(embeddings)
     
-    # 2. Modèle KNN pour les playlists (SUR LE T-SNE - Distance Euclidienne)
-    print("🔗 Indexation des voisins basée sur la PROJECTION VISUELLE (2D)...")
+    print("🔗 Indexation des voisins...")
     nn_model = NearestNeighbors(n_neighbors=20, metric='euclidean')
-    nn_model.fit(coords) # On fit sur les coordonnées 2D
+    nn_model.fit(coords)
     
-    def create_playlist(seed_idx, size=5, diversity=0.2):
+    def create_playlist(seed_idx, size=5, diversity=0.7):
         playlist = [seed_idx]
         available = set(range(len(embeddings))) - {seed_idx}
-        
         while len(playlist) < size and available:
             last = playlist[-1]
-            # On cherche les voisins de la coordonnée 2D
             last_coord = coords[last].reshape(1, -1)
-            
             dists, indices = nn_model.kneighbors(last_coord, n_neighbors=15)
-            
             candidates = [(i, d) for i, d in zip(indices[0], dists[0]) if i in available]
             if not candidates: break
             
@@ -187,82 +182,69 @@ def generate_and_analyze(embeddings, meta_df):
                 sel = candidates[np.random.randint(0, min(5, len(candidates)))]
             else:
                 sel = candidates[0]
-            
             playlist.append(sel[0]); available.remove(sel[0])
         return playlist
 
-    # 3. Génération des Playlists
+    # Génération Playlists
     playlists = {}
     
-    # Métal
+    # 1. Metal Journey
     metal_idx = meta_df[meta_df['label'] == 'metal'].index
-    if len(metal_idx) > 0:
-        playlists['Metal Journey'] = create_playlist(metal_idx[0], size=8, diversity=0.1)
+    if len(metal_idx) > 0: playlists['Metal Journey'] = create_playlist(metal_idx[0], size=8)
         
-    # Jazz
-    jazz_idx = meta_df[meta_df['label'] == 'jazz'].index
-    if len(jazz_idx) > 0:
-        playlists['Jazz Vibes'] = create_playlist(jazz_idx[0], size=8, diversity=0.2)
-        
-    # DEAM (Emotion)
-    deam_idx = meta_df[meta_df['source'] == 'DEAM'].index
-    if len(deam_idx) > 0:
-        playlists['Emotion Flow'] = create_playlist(deam_idx[0], size=8, diversity=0.3)
+    # 2. Relaxing/Jazz (Cherche un Jazz ou un Relax)
+    relax_idx = meta_df[meta_df['label'].isin(['jazz', 'Q4 Relax'])].index
+    if len(relax_idx) > 0: playlists['Chill Vibes'] = create_playlist(relax_idx[0], size=8)
 
-    # --- 4. AFFICHAGE DÉTAILLÉ (TEXTE) ---
-    print("\n" + "="*60)
-    print("📊 ANALYSE DÉTAILLÉE (BASÉE SUR PROXIMITÉ VISUELLE)")
-    print("="*60)
+    # 3. Happy Flow
+    happy_idx = meta_df[meta_df['label'] == 'Q1 Happy'].index
+    if len(happy_idx) > 0: playlists['Happy Flow'] = create_playlist(happy_idx[0], size=8)
+
+    # --- AFFICHAGE TEXTE ---
+    print("\n" + "="*70)
+    print("📊 ANALYSE DES PLAYLISTS GÉNÉRÉES")
+    print("="*70)
 
     for name, indices in playlists.items():
         print(f"\n🎵 Playlist : {name}")
-        print("-" * 30)
-        
+        print("-" * 35)
         pl_data = meta_df.iloc[indices].copy()
         pl_data['Track #'] = range(1, len(indices) + 1)
-        cols = ['Track #', 'source', 'label', 'filename'] 
-        print(pl_data[cols].to_string(index=False))
+        # On affiche label (qui contient maintenant Q1 Happy etc.)
+        print(pl_data[['Track #', 'source', 'label', 'filename']].to_string(index=False))
 
-    # --- 5. VISUALISATION GRAPHIQUE ---
+    # --- VISUALISATION ---
     plt.figure(figsize=(16, 10))
     
-    # Fond
+    # Points de fond (GTZAN)
     gtzan_df = meta_df[meta_df['source'] == 'GTZAN']
-    unique_genres = gtzan_df['label'].unique()
-    cmap = plt.get_cmap('tab10')
-    genre_to_color = {g: cmap(i/10) for i, g in enumerate(unique_genres)}
-    
-    for genre in unique_genres:
-        idx = meta_df[meta_df['label'] == genre].index
-        plt.scatter(coords[idx, 0], coords[idx, 1], c=[genre_to_color[genre]], label=genre, s=20, alpha=0.5)
+    for g in gtzan_df['label'].unique():
+        idx = meta_df[meta_df['label'] == g].index
+        plt.scatter(coords[idx, 0], coords[idx, 1], label=g, s=20, alpha=0.5)
         
-    deam_idx = meta_df[meta_df['source'] == 'DEAM'].index
-    plt.scatter(coords[deam_idx, 0], coords[deam_idx, 1], c='lightgray', label='DEAM (Emotion)', s=20, alpha=0.3, zorder=0)
+    # Points de fond (DEAM - Par émotion)
+    deam_df = meta_df[meta_df['source'] == 'DEAM']
+    quad_colors = {"Q1 Happy": "red", "Q2 Angry": "orange", "Q3 Sad": "blue", "Q4 Relax": "green"}
+    for q in deam_df['label'].unique():
+        idx = meta_df[meta_df['label'] == q].index
+        c = quad_colors.get(q, 'gray')
+        plt.scatter(coords[idx, 0], coords[idx, 1], c=c, label=q, s=20, alpha=0.3)
 
-    # Playlists
-    colors_pl = ['black', 'darkblue', 'darkred']
+    # Tracé des playlists
+    colors_pl = ['black', 'darkblue', 'purple']
     for i, (name, indices) in enumerate(playlists.items()):
         path = coords[indices]
         c = colors_pl[i % len(colors_pl)]
-        
-        plt.plot(path[:, 0], path[:, 1], c=c, linewidth=2, label=f"PL: {name}", alpha=0.9)
-        plt.scatter(path[:, 0], path[:, 1], c=c, s=60, edgecolors='white', zorder=10)
-        
-        plt.text(path[0, 0], path[0, 1], "START", fontsize=9, fontweight='bold', color=c, zorder=11)
-        plt.text(path[-1, 0], path[-1, 1], "END", fontsize=9, fontweight='bold', color=c, zorder=11)
+        plt.plot(path[:, 0], path[:, 1], c=c, linewidth=2, label=f"PL: {name}", alpha=0.8)
+        plt.scatter(path[:, 0], path[:, 1], c=c, s=50, edgecolors='white', zorder=10)
+        plt.text(path[0, 0], path[0, 1], "START", fontsize=8, fontweight='bold', color=c)
 
-    plt.title("Visualisation t-SNE (Playlists basées sur la distance visuelle)")
+    plt.title("Espace Latent Musical : Genres (GTZAN) & Émotions (DEAM)")
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
-    
-    out_path = "CNN/tsne_plot/test_set_visual_playlist.png"
-    plt.savefig(out_path)
-    print(f"\n✅ Graphique sauvegardé : {out_path}")
+    plt.savefig("CNN/tsne_plot/visual_playlist_final.png")
     plt.show()
 
-# ============================================================================
-# 4. MAIN
-# ============================================================================
 if __name__ == "__main__":
     WEIGHTS = "CNN/weights_multitask/best_ccc_model.pth"
     if not os.path.exists(WEIGHTS): exit("❌ Poids introuvables.")
@@ -274,12 +256,10 @@ if __name__ == "__main__":
     if len(ds_g) == 0 and len(ds_d) == 0: exit("❌ Aucun dataset chargé.")
 
     full_dataset = ConcatDataset([ds_g, ds_d])
-    total_len = len(full_dataset)
-    train_sz = int(0.7 * total_len); val_sz = int(0.15 * total_len)
-    test_sz = total_len - train_sz - val_sz
-    
-    _, _, test_dataset = random_split(full_dataset, [train_sz, val_sz, test_sz], 
-                                      generator=torch.Generator().manual_seed(42))
+    # On utilise un sous-ensemble pour le test final (plus rapide pour la démo)
+    # ou tout le dataset si tu veux
+    _, test_dataset = random_split(full_dataset, [int(0.8*len(full_dataset)), len(full_dataset)-int(0.8*len(full_dataset))], 
+                                   generator=torch.Generator().manual_seed(42))
     
     print(f"\n📊 Taille du TEST SET : {len(test_dataset)} morceaux")
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
