@@ -9,12 +9,19 @@ import librosa
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 from sklearn.manifold import TSNE
+import shutil  # <--- AJOUT : Pour copier les fichiers
 import warnings
 
 warnings.filterwarnings("ignore")
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"🖥️ Device utilisé : {device}")
+
+# ============================================================================
+# 0. CONFIGURATION (AJOUT POUR L'EXPORT)
+# ============================================================================
+# Vérifie juste que tes MP3s DEAM sont bien dans ce dossier
+DEAM_AUDIO_DIR = 'deam/DEAM_audio/MEMD_audio/' 
 
 # ============================================================================
 # 1. UTILITAIRES & MODÈLE
@@ -60,7 +67,7 @@ class MultiTaskCNN(nn.Module):
         elif task == 'emotion': return self.head_emotion(self.dropout(emb))
 
 # ============================================================================
-# 2. DATASETS (AVEC LOGIQUE ÉMOTIONNELLE)
+# 2. DATASETS (STRICTEMENT IDENTIQUE À TON CODE)
 # ============================================================================
 class GTZANFullDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
@@ -165,21 +172,21 @@ def generate_and_analyze(embeddings, meta_df):
     coords = tsne.fit_transform(embeddings)
     
     print("🔗 Indexation des voisins...")
-    nn_model = NearestNeighbors(n_neighbors=20, metric='euclidean')
+    nn_model = NearestNeighbors(n_neighbors=40, metric='euclidean')
     nn_model.fit(coords)
     
-    def create_playlist(seed_idx, size=5, diversity=0.7):
+    def create_playlist(seed_idx, size=5, diversity=0.3):
         playlist = [seed_idx]
         available = set(range(len(embeddings))) - {seed_idx}
         while len(playlist) < size and available:
             last = playlist[-1]
             last_coord = coords[last].reshape(1, -1)
-            dists, indices = nn_model.kneighbors(last_coord, n_neighbors=15)
+            dists, indices = nn_model.kneighbors(last_coord, n_neighbors=25)
             candidates = [(i, d) for i, d in zip(indices[0], dists[0]) if i in available]
             if not candidates: break
             
             if np.random.random() < diversity and len(candidates) > 2:
-                sel = candidates[np.random.randint(0, min(5, len(candidates)))]
+                sel = candidates[np.random.randint(0, min(15, len(candidates)))]
             else:
                 sel = candidates[0]
             playlist.append(sel[0]); available.remove(sel[0])
@@ -190,15 +197,15 @@ def generate_and_analyze(embeddings, meta_df):
     
     # 1. Metal Journey
     metal_idx = meta_df[meta_df['label'] == 'metal'].index
-    if len(metal_idx) > 0: playlists['Metal Journey'] = create_playlist(metal_idx[0], size=8)
+    if len(metal_idx) > 0: playlists['Metal Journey'] = create_playlist(metal_idx[0], size=12)
         
     # 2. Relaxing/Jazz (Cherche un Jazz ou un Relax)
     relax_idx = meta_df[meta_df['label'].isin(['jazz', 'Q4 Relax'])].index
-    if len(relax_idx) > 0: playlists['Chill Vibes'] = create_playlist(relax_idx[0], size=8)
+    if len(relax_idx) > 0: playlists['Chill Vibes'] = create_playlist(relax_idx[0], size=12)
 
     # 3. Happy Flow
     happy_idx = meta_df[meta_df['label'] == 'Q1 Happy'].index
-    if len(happy_idx) > 0: playlists['Happy Flow'] = create_playlist(happy_idx[0], size=8)
+    if len(happy_idx) > 0: playlists['Happy Flow'] = create_playlist(happy_idx[0], size=12)
 
     # --- AFFICHAGE TEXTE ---
     print("\n" + "="*70)
@@ -243,8 +250,72 @@ def generate_and_analyze(embeddings, meta_df):
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.savefig("CNN/tsne_plot/visual_playlist_final.png")
-    plt.show()
+    # plt.show() # Je commente pour éviter le blocage si tu lances en script
+    
+    # AJOUT ESSENTIEL : Retourner les playlists pour pouvoir les exporter
+    return playlists
 
+# ============================================================================
+# 4. FONCTION D'EXPORT PORTABLE (AJOUT)
+# ============================================================================
+def export_portable_playlists(playlists, meta_df, gtzan_root_dir):
+    """
+    Crée un dossier 'Exported_Playlists', crée des sous-dossiers,
+    et COPIE physiquement les fichiers audio dedans.
+    """
+    base_output_dir = "Exported_Playlists"
+    if not os.path.exists(base_output_dir): os.makedirs(base_output_dir)
+    
+    print(f"\n💾 EXPORT PORTABLE (Copie physique dans {base_output_dir})")
+    print("-" * 60)
+
+    for name, indices in playlists.items():
+        # Création du dossier spécifique (ex: Exported_Playlists/Happy_Flow)
+        safe_name = name.replace(" ", "_")
+        playlist_folder = os.path.join(base_output_dir, safe_name)
+        if not os.path.exists(playlist_folder): os.makedirs(playlist_folder)
+        
+        # On crée aussi un petit fichier m3u LOCAL dans ce dossier pour lancer la lecture
+        m3u_path = os.path.join(playlist_folder, f"PLAY_{safe_name}.m3u")
+        
+        with open(m3u_path, "w", encoding="utf-8") as f:
+            f.write("#EXTM3U\n")
+            
+            for i, idx in enumerate(indices):
+                row = meta_df.iloc[idx]
+                fname = row['filename']
+                source = row['source']
+                label = row['label']
+                
+                # 1. Trouver le fichier original sur ton disque
+                if source == "GTZAN":
+                    # GTZAN est organisé en sous-dossiers par genre
+                    original_path = os.path.join(gtzan_root_dir, label, fname)
+                else:
+                    # DEAM est souvent tout plat dans un dossier
+                    original_path = os.path.join(DEAM_AUDIO_DIR, fname)
+                
+                # 2. Copier et Renommer
+                # On ajoute "01_", "02_" pour que l'ordre soit respecté dans le dossier
+                if os.path.exists(original_path):
+                    new_filename = f"{i+1:02d}_{fname}" 
+                    destination_path = os.path.join(playlist_folder, new_filename)
+                    
+                    try:
+                        shutil.copy2(original_path, destination_path)
+                        # Ajout au m3u (chemin relatif simple)
+                        f.write(f"#EXTINF:-1,{source} - {label}\n")
+                        f.write(f"{new_filename}\n")
+                    except Exception as e:
+                        print(f"⚠️ Erreur copie : {fname} -> {e}")
+                else:
+                    print(f"⚠️ Fichier source introuvable : {original_path}")
+
+        print(f"✅ Playlist '{name}' copiée dans : {playlist_folder}/")
+
+# ============================================================================
+# 5. MAIN
+# ============================================================================
 if __name__ == "__main__":
     WEIGHTS = "CNN/weights_multitask/best_ccc_model.pth"
     if not os.path.exists(WEIGHTS): exit("❌ Poids introuvables.")
@@ -256,8 +327,7 @@ if __name__ == "__main__":
     if len(ds_g) == 0 and len(ds_d) == 0: exit("❌ Aucun dataset chargé.")
 
     full_dataset = ConcatDataset([ds_g, ds_d])
-    # On utilise un sous-ensemble pour le test final (plus rapide pour la démo)
-    # ou tout le dataset si tu veux
+    
     _, test_dataset = random_split(full_dataset, [int(0.8*len(full_dataset)), len(full_dataset)-int(0.8*len(full_dataset))], 
                                    generator=torch.Generator().manual_seed(42))
     
@@ -268,4 +338,9 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load(WEIGHTS, map_location=device))
 
     embs, meta = extract_test_embeddings(model, test_loader)
-    generate_and_analyze(embs, meta)
+    
+    # Récupérer les playlists
+    playlists = generate_and_analyze(embs, meta)
+    
+    # Lancer l'export portable
+    export_portable_playlists(playlists, meta, 'Data/genres_original/')

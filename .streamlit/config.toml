@@ -1,0 +1,6 @@
+[theme]
+base="dark"
+primaryColor="#764ba2"  # Votre couleur d'accentuation (violet ici)
+backgroundColor="#000000" # Le fond principal noir
+secondaryBackgroundColor="#111111" # Le fond de la sidebar et des inputs
+textColor="#FFFFFF"
