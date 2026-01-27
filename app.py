@@ -200,8 +200,9 @@ elif choice == "🎵 Playlist Audio":
 
     st.title("Today's Top Hits")
     
-    AUDIO_DIR = "Data/genres_original/blues"
-    audio_files = sorted(glob(os.path.join(AUDIO_DIR, "*.wav")))
+    AUDIO_DIR = "Exported_Playlists/Metal_Journey/"
+    # On cherche les WAV et les MP3, on les additionne (+), puis on trie le tout
+    audio_files = sorted(glob(os.path.join(AUDIO_DIR, "*.wav")) + glob(os.path.join(AUDIO_DIR, "*.mp3")))
 
     if not audio_files:
         st.error("Aucun fichier audio trouvé.")
