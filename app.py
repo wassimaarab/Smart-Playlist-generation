@@ -5,6 +5,7 @@ from glob import glob
 
 st.set_page_config(page_title="Dashboard entraînement", page_icon="📊", layout="wide")
 
+
 # -----------------------
 #       NAVIGATION
 # -----------------------
@@ -155,143 +156,144 @@ elif choice == "🖼️ TSNE plot":
 # -----------------------
 #       PLAYLIST AUDIO
 # -----------------------
+# -----------------------
+#       PLAYLIST AUDIO
+# -----------------------
 elif choice == "🎵 Playlist Audio":
+    # --- CSS PERSONNALISÉ ---
     st.markdown("""
         <style>
-        /* Style global inspiré de l'image */
-        .main { background-color: #121212; }
-        .stApp { background: linear-gradient(180deg, #222222 0%, #121212 100%); }
+        /* Supprimer les marges par défaut pour un look app */
+        .block-container { padding-top: 2rem; padding-bottom: 5rem; }
         
-        /* Conteneur de la playlist */
-        .spotify-container {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 15px;
+        /* Style de la carte 'Now Playing' */
+        .now-playing-card {
+            background-color: #1E1E1E;
             padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            text-align: center;
+            border: 1px solid #333;
         }
-
-        /* Ligne de chanson */
-        .track-row {
-            display: flex;
-            align-items: center;
-            padding: 10px;
-            border-radius: 8px;
-            transition: background 0.2s;
-            margin-bottom: 5px;
-        }
-        .track-row:hover { background: rgba(255, 255, 255, 0.1); }
         
-        .track-img {
-            width: 50px;
-            height: 50px;
-            border-radius: 4px;
-            margin-right: 15px;
-            background-color: #282828;
+        /* Style de la fausse pochette d'album */
+        .album-art {
+            width: 100%;
+            aspect-ratio: 1/1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
+            font-size: 4rem;
+            margin-bottom: 15px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
         }
-
-        .track-info { flex-grow: 1; }
-        .track-name { color: white; font-weight: 600; font-size: 16px; margin: 0; }
-        .track-artist { color: #b3b3b3; font-size: 13px; margin: 0; }
+        
+        /* Style de la liste des chansons */
+        .song-row {
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 5px;
+            transition: background 0.2s;
+            border: 1px solid transparent;
+        }
+        .song-row:hover {
+            background-color: #2C2C2C;
+            border: 1px solid #444;
+        }
+        .active-song {
+            background-color: #262626;
+            border-left: 4px solid #764ba2;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    st.title("Today's Top Hits")
-    
+    st.title("🎧 Studio Session")
+    st.markdown("Parcourez les échantillons audio générés par le modèle.")
+
     AUDIO_DIR = "Exported_Playlists/Metal_Journey/"
     # On cherche les WAV et les MP3, on les additionne (+), puis on trie le tout
-    audio_files = sorted(glob(os.path.join(AUDIO_DIR, "*.wav")) + glob(os.path.join(AUDIO_DIR, "*.mp3")))
-
-    if not audio_files:
-        st.error("Aucun fichier audio trouvé.")
+    
+    # Sécurité si le dossier n'existe pas
+    if not os.path.isdir(AUDIO_DIR):
+        st.error(f"Le dossier `{AUDIO_DIR}` est introuvable.")
     else:
-        # Initialisation du morceau courant
-        if 'current_track' not in st.session_state:
-            st.session_state.current_track = audio_files[0]
+        audio_files = sorted(glob(os.path.join(AUDIO_DIR, "*.wav")) + glob(os.path.join(AUDIO_DIR, "*.mp3")))
 
-        # --- HEADER (Comme le haut du téléphone) ---
-        col_h1, col_h2 = st.columns([1, 2])
-        with col_h1:
-            # On simule une pochette d'album
-            st.markdown('<div style="background: linear-gradient(45deg, #1DB954, #191414); height: 200px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 80px;">🎵</div>', unsafe_allow_html=True)
-        with col_h2:
-            st.caption("PLAYLIST")
-            st.header("Mes Entraînements")
-            st.write(f"**{len(audio_files)} titres** • Échantillons générés")
+        if not audio_files:
+            st.warning("Aucun fichier .wav trouvé dans le dossier.")
+        else:
+            # Gestion de l'état (Session State)
+            if 'current_track' not in st.session_state:
+                st.session_state.current_track = audio_files[0]
 
-        st.write("##") # Espace
+            # --- MISE EN PAGE : 2 COLONNES (Liste | Lecteur) ---
+            col_list, col_player = st.columns([2, 1], gap="large")
 
-        # --- LISTE DES TITRES ---
-        for file_path in audio_files:
-            filename = os.path.basename(file_path)
-            
-            # Création de la ligne "Spotify"
-            col_info, col_btn = st.columns([5, 1])
-            
-            with col_info:
-                st.markdown(f"""
-                    <div class="track-row">
-                        <div class="track-img">🔊</div>
-                        <div class="track-info">
-                            <p class="track-name">{filename}</p>
-                            <p class="track-artist">Système Expert • Projet ENSEIRB</p>
+            # --- COLONNE DE DROITE : LE LECTEUR (NOW PLAYING) ---
+            with col_player:
+                st.markdown("### En lecture")
+                
+                current_filename = os.path.basename(st.session_state.current_track)
+                
+                # Conteneur visuel (Card)
+                with st.container():
+                    # Simulation pochette
+                    st.markdown(f"""
+                        <div class="now-playing-card">
+                            <div class="album-art">🎵</div>
+                            <h3 style="margin: 0; color: white;">{current_filename}</h3>
+                            <p style="color: #888; font-size: 0.9em;">Génération AI • Blues Model</p>
                         </div>
-                    </div>
-                """, unsafe_allow_html=True)
-            
-            with col_btn:
-                st.write("") # Alignement vertical
-                if st.button("▶️", key=file_path, help="Lire ce titre"):
-                    st.session_state.current_track = file_path
-                    st.rerun()
+                    """, unsafe_allow_html=True)
+                    
+                    st.write("") # Spacer
+                    
+                    # Le lecteur audio natif Streamlit
+                    # Note : on lit le fichier binaire pour éviter les problèmes de cache parfois
+                    try:
+                        st.audio(st.session_state.current_track, format="audio/wav")
+                    except Exception as e:
+                        st.error(f"Erreur de lecture : {e}")
 
-        # --- LECTEUR FIXE (BARRE DE LECTURE EN BAS) ---
-        st.markdown(f"""
-        <style>
-        .player-bar {{
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            background: rgba(24, 24, 24, 0.98);
-            border-top: 1px solid rgba(255,255,255,0.1);
-            padding: 10px 20px;
-            z-index: 9999;
-        }}
+                    # Bouton de téléchargement
+                    with open(st.session_state.current_track, "rb") as file:
+                        st.download_button(
+                            label="⬇️ Télécharger le titre",
+                            data=file,
+                            file_name=current_filename,
+                            mime="audio/wav",
+                            use_container_width=True
+                        )
 
-        .player-content {{
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }}
-
-        .player-track {{
-            color: white;
-            font-weight: 600;
-        }}
-
-        .player-artist {{
-            color: #b3b3b3;
-            font-size: 12px;
-        }}
-        </style>
-
-        <div class="player-bar">
-            <div class="player-content">
-                <div>
-                    <div class="player-track">{os.path.basename(st.session_state.current_track)}</div>
-                    <div class="player-artist">Système Expert • Projet ENSEIRB</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown("<div style='height: 60px;'></div>", unsafe_allow_html=True)
-        st.audio(st.session_state.current_track)
-
-
-    st.markdown(
-    "<div style='height: 120px;'></div>",
-    unsafe_allow_html=True
-    )
+            # --- COLONNE DE GAUCHE : LA PLAYLIST ---
+            with col_list:
+                st.markdown("### Bibliothèque")
+                
+                # Création d'un conteneur avec scroll si la liste est longue
+                with st.container():
+                    for i, file_path in enumerate(audio_files):
+                        filename = os.path.basename(file_path)
+                        is_active = (file_path == st.session_state.current_track)
+                        
+                        # Création d'une ligne pour chaque chanson
+                        # On utilise des colonnes pour aligner le texte et le bouton
+                        c1, c2 = st.columns([0.85, 0.15])
+                        
+                        with c1:
+                            # Visuel conditionnel (Gras si actif)
+                            if is_active:
+                                st.markdown(f"**🟢 {i+1}. {filename}**")
+                            else:
+                                st.markdown(f"{i+1}. {filename}")
+                                
+                        with c2:
+                            # Le bouton Play
+                            # On utilise une clé unique pour chaque bouton
+                            if st.button("▶", key=f"play_{i}", use_container_width=True):
+                                st.session_state.current_track = file_path
+                                st.rerun()
+                        
+                        # Petit séparateur visuel discret
+                        st.markdown("<hr style='margin: 5px 0; opacity: 0.1;'>", unsafe_allow_html=True)
