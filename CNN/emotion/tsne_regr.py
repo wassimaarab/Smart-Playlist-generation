@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # ============================================================================
-# 1. CLASSES (Doivent être identiques à l'entraînement)
+# 1. CLASSES
 # ============================================================================
 class RegressionDataset(Dataset):
     def __init__(self, root_dir, dataframe, cache_dir="cache_reg"):
@@ -65,11 +65,10 @@ class RegressionCNN(nn.Module):
         return self.fc3(emb)
 
 # ============================================================================
-# 2. EVALUATION COMPLÈTE (Métriques + t-SNE multiples)
+# 2. EVALUATION COMPLÈTE
 # ============================================================================
 def evaluate_with_tsne():
     ROOT_DIR = "DEAM_Regression"
-    # Utilise le bon fichier selon ton entraînement précédent
     MODEL_PATH = "CNN/weights_balanced/best_reg_model_da.pth" 
     CSV_PATH = os.path.join(ROOT_DIR, "metadata.csv")
     
@@ -80,19 +79,16 @@ def evaluate_with_tsne():
 
     print(f"⚖️ Chargement du modèle : {os.path.basename(MODEL_PATH)}")
 
-    # 1. Charger Test Set
     df = pd.read_csv(CSV_PATH)
     idx = np.arange(len(df))
     _, test_idx = train_test_split(idx, test_size=0.15, random_state=42)
     test_ds = RegressionDataset(ROOT_DIR, df.iloc[test_idx])
     test_loader = DataLoader(test_ds, batch_size=16, shuffle=False)
 
-    # 2. Charger Modèle
     model = RegressionCNN().to(device)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
     model.eval()
 
-    # 3. Prédictions & Embeddings
     print("🚀 Calcul des prédictions et extraction des embeddings...")
     preds_val, preds_aro = [], []
     targs_val, targs_aro = [], []
@@ -102,22 +98,18 @@ def evaluate_with_tsne():
         for X, y in test_loader:
             X = X.to(device)
             
-            # A. On récupère l'embedding (l'avant-dernière couche)
             emb = model(X, return_embedding=True)
             all_embs.extend(emb.cpu().numpy())
             
-            # B. On passe l'embedding dans la dernière couche pour avoir la prédiction
             out = model.fc3(emb).cpu().numpy()
             y = y.numpy()
             
             preds_val.extend(out[:, 0]); preds_aro.extend(out[:, 1])
             targs_val.extend(y[:, 0]); targs_aro.extend(y[:, 1])
 
-    # 4. Métriques
     r2_v = r2_score(targs_val, preds_val); r2_a = r2_score(targs_aro, preds_aro)
     print(f"\n📊 RÉSULTATS : Valence R2={r2_v:.3f} | Arousal R2={r2_a:.3f}")
 
-    # 5. Plot Scatter (R2)
     plt.figure(figsize=(14, 6))
     plt.subplot(1, 2, 1)
     plt.scatter(targs_val, preds_val, alpha=0.5, color='blue', s=20)
@@ -128,27 +120,20 @@ def evaluate_with_tsne():
     plt.savefig("CNN/tsne_reg/scatter_separated.png")
     plt.show()
 
-    # 6. Calcul t-SNE
     print("🎨 Calcul du t-SNE (Cela peut prendre quelques secondes)...")
     tsne = TSNE(n_components=2, perplexity=30, init='pca', random_state=42)
     X_2d = tsne.fit_transform(np.array(all_embs))
 
-    # 7. Affichage des 3 t-SNE
     plt.figure(figsize=(18, 5))
     
-    # A. t-SNE coloré par VALENCE (Continu)
     plt.subplot(1, 3, 1)
-    # cmap='plasma' : bleu foncé (bas) -> jaune brillant (haut)
     sc1 = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=targs_val, cmap='plasma', alpha=0.7, s=20)
     plt.colorbar(sc1, label='Négatif <-> Positif'); plt.title("t-SNE : Valence (Positivité)")
     
-    # B. t-SNE coloré par AROUSAL (Continu)
     plt.subplot(1, 3, 2)
-    # cmap='viridis' : violet (bas) -> jaune/vert (haut)
     sc2 = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=targs_aro, cmap='viridis', alpha=0.7, s=20)
     plt.colorbar(sc2, label='Calme <-> Énergique'); plt.title("t-SNE : Arousal (Énergie)")
     
-    # C. t-SNE coloré par QUADRANTS (Discret)
     plt.subplot(1, 3, 3)
     med_v = np.median(targs_val); med_a = np.median(targs_aro)
     labels, colors = [], []

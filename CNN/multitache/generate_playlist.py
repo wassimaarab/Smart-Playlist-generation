@@ -9,7 +9,7 @@ import librosa
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 from sklearn.manifold import TSNE
-import shutil  # <--- AJOUT : Pour copier les fichiers
+import shutil  
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -18,9 +18,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"🖥️ Device utilisé : {device}")
 
 # ============================================================================
-# 0. CONFIGURATION (AJOUT POUR L'EXPORT)
+# 0. CONFIGURATION
 # ============================================================================
-# Vérifie juste que tes MP3s DEAM sont bien dans ce dossier
 DEAM_AUDIO_DIR = 'deam/DEAM_audio/MEMD_audio/' 
 
 # ============================================================================
@@ -67,7 +66,7 @@ class MultiTaskCNN(nn.Module):
         elif task == 'emotion': return self.head_emotion(self.dropout(emb))
 
 # ============================================================================
-# 2. DATASETS (STRICTEMENT IDENTIQUE À TON CODE)
+# 2. DATASETS 
 # ============================================================================
 class GTZANFullDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
@@ -125,9 +124,7 @@ class DEAMCachedFullDataset(Dataset):
             X = torch.load(item['path'])
             X = ensure_fixed_length(X, self.target_len)
             
-            # --- CALCUL DU LABEL ÉMOTIONNEL ---
             v, a = item['valence'], item['arousal']
-            # Seuil standard DEAM = 5.0 (l'échelle est 1-9)
             if v >= 5.0 and a >= 5.0:
                 emo_label = "Q1 Happy"
             elif v < 5.0 and a >= 5.0:
@@ -192,7 +189,6 @@ def generate_and_analyze(embeddings, meta_df):
             playlist.append(sel[0]); available.remove(sel[0])
         return playlist
 
-    # Génération Playlists
     playlists = {}
     
     # 1. Metal Journey
@@ -207,7 +203,6 @@ def generate_and_analyze(embeddings, meta_df):
     happy_idx = meta_df[meta_df['label'] == 'Q1 Happy'].index
     if len(happy_idx) > 0: playlists['Happy Flow'] = create_playlist(happy_idx[0], size=12)
 
-    # --- AFFICHAGE TEXTE ---
     print("\n" + "="*70)
     print("📊 ANALYSE DES PLAYLISTS GÉNÉRÉES")
     print("="*70)
@@ -217,19 +212,15 @@ def generate_and_analyze(embeddings, meta_df):
         print("-" * 35)
         pl_data = meta_df.iloc[indices].copy()
         pl_data['Track #'] = range(1, len(indices) + 1)
-        # On affiche label (qui contient maintenant Q1 Happy etc.)
         print(pl_data[['Track #', 'source', 'label', 'filename']].to_string(index=False))
 
-    # --- VISUALISATION ---
     plt.figure(figsize=(16, 10))
     
-    # Points de fond (GTZAN)
     gtzan_df = meta_df[meta_df['source'] == 'GTZAN']
     for g in gtzan_df['label'].unique():
         idx = meta_df[meta_df['label'] == g].index
         plt.scatter(coords[idx, 0], coords[idx, 1], label=g, s=20, alpha=0.5)
         
-    # Points de fond (DEAM - Par émotion)
     deam_df = meta_df[meta_df['source'] == 'DEAM']
     quad_colors = {"Q1 Happy": "red", "Q2 Angry": "orange", "Q3 Sad": "blue", "Q4 Relax": "green"}
     for q in deam_df['label'].unique():
@@ -237,7 +228,6 @@ def generate_and_analyze(embeddings, meta_df):
         c = quad_colors.get(q, 'gray')
         plt.scatter(coords[idx, 0], coords[idx, 1], c=c, label=q, s=20, alpha=0.3)
 
-    # Tracé des playlists
     colors_pl = ['black', 'darkblue', 'purple']
     for i, (name, indices) in enumerate(playlists.items()):
         path = coords[indices]
@@ -250,13 +240,11 @@ def generate_and_analyze(embeddings, meta_df):
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     plt.savefig("CNN/tsne_plot/visual_playlist_final.png")
-    # plt.show() # Je commente pour éviter le blocage si tu lances en script
     
-    # AJOUT ESSENTIEL : Retourner les playlists pour pouvoir les exporter
     return playlists
 
 # ============================================================================
-# 4. FONCTION D'EXPORT PORTABLE (AJOUT)
+# 4. FONCTION D'EXPORT PORTABLE
 # ============================================================================
 def export_portable_playlists(playlists, meta_df, gtzan_root_dir):
     """
@@ -270,12 +258,10 @@ def export_portable_playlists(playlists, meta_df, gtzan_root_dir):
     print("-" * 60)
 
     for name, indices in playlists.items():
-        # Création du dossier spécifique (ex: Exported_Playlists/Happy_Flow)
         safe_name = name.replace(" ", "_")
         playlist_folder = os.path.join(base_output_dir, safe_name)
         if not os.path.exists(playlist_folder): os.makedirs(playlist_folder)
         
-        # On crée aussi un petit fichier m3u LOCAL dans ce dossier pour lancer la lecture
         m3u_path = os.path.join(playlist_folder, f"PLAY_{safe_name}.m3u")
         
         with open(m3u_path, "w", encoding="utf-8") as f:
@@ -287,23 +273,17 @@ def export_portable_playlists(playlists, meta_df, gtzan_root_dir):
                 source = row['source']
                 label = row['label']
                 
-                # 1. Trouver le fichier original sur ton disque
                 if source == "GTZAN":
-                    # GTZAN est organisé en sous-dossiers par genre
                     original_path = os.path.join(gtzan_root_dir, label, fname)
                 else:
-                    # DEAM est souvent tout plat dans un dossier
                     original_path = os.path.join(DEAM_AUDIO_DIR, fname)
                 
-                # 2. Copier et Renommer
-                # On ajoute "01_", "02_" pour que l'ordre soit respecté dans le dossier
                 if os.path.exists(original_path):
                     new_filename = f"{i+1:02d}_{fname}" 
                     destination_path = os.path.join(playlist_folder, new_filename)
                     
                     try:
                         shutil.copy2(original_path, destination_path)
-                        # Ajout au m3u (chemin relatif simple)
                         f.write(f"#EXTINF:-1,{source} - {label}\n")
                         f.write(f"{new_filename}\n")
                     except Exception as e:
@@ -339,8 +319,6 @@ if __name__ == "__main__":
 
     embs, meta = extract_test_embeddings(model, test_loader)
     
-    # Récupérer les playlists
     playlists = generate_and_analyze(embs, meta)
     
-    # Lancer l'export portable
     export_portable_playlists(playlists, meta, 'Data/genres_original/')

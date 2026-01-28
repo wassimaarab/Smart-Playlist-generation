@@ -13,13 +13,12 @@ import matplotlib.pyplot as plt
 warnings.filterwarnings("ignore")
 
 # ============================================================================
-# 1. MODÈLE MONOTÂCHE (MÊME ARCHITECTURE, SANS BRANCHE ÉMOTION)
+# 1. MODÈLE MONOTÂCHE
 # ============================================================================
 class TemporalCNN(nn.Module):
     def __init__(self, num_genres):
         super().__init__()
         
-        # --- BLOC 1 : EXTRACTION DE FEATURES (IDENTIQUE AU TRONC COMMUN) ---
         self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
         self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
         self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
@@ -31,37 +30,31 @@ class TemporalCNN(nn.Module):
         self.pool4x = nn.MaxPool2d(4)
         self.pool2x = nn.MaxPool2d(2)
         
-        # --- BLOC 2 : CLASSIFICATION (ANCIENNE "TÊTE GENRE" INTÉGRÉE) ---
-        # FC Shared (512*3 -> 2048)
         self.fc1 = nn.Linear(512*3, 2048)
         
-        # Partie qui était dans la "tête genre" (2048 -> 1024 -> num_genres)
         self.fc2 = nn.Linear(2048, 1024)
         self.fc3 = nn.Linear(1024, num_genres)
         
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
-        # 1. Convolutions
         x = self.pool4x(F.relu(self.bn1(self.conv1(x))))
         x = self.pool2x(F.relu(self.bn2(self.conv2(x))))
         x = self.pool2x(F.relu(self.bn3(self.conv3(x))))
         x = F.relu(self.bn4(self.conv4(x))) 
         
-        # 2. Global Statistics Pooling (Mean, Max, L2)
         mean = x.mean(dim=2)
         max_ = x.max(dim=2).values
         l2 = torch.sqrt((x**2).sum(dim=2))
-        x = torch.cat([mean, max_, l2], dim=1).mean(dim=2) # [Batch, 512*3]
+        x = torch.cat([mean, max_, l2], dim=1).mean(dim=2) 
         
-        # 3. Dense Layers (Linéaire)
-        x = F.relu(self.fc1(x))      # -> 2048
+        x = F.relu(self.fc1(x))    
         x = self.dropout(x)
         
-        x = F.relu(self.fc2(x))      # -> 1024
+        x = F.relu(self.fc2(x))     
         x = self.dropout(x)
         
-        out = self.fc3(x)            # -> num_genres
+        out = self.fc3(x)           
         return out
 
 # ============================================================================
@@ -147,7 +140,6 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
     
     print(f"🚀 Démarrage entraînement (Monotâche) sur {device} | Classes: {num_classes}")
     
-    # Modèle monotâche
     model = TemporalCNN(num_genres=num_classes).to(device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
@@ -166,7 +158,7 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
         for X, y in train_loader:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
-            outputs = model(X) # Appel simple, plus de 'task='
+            outputs = model(X) 
             loss = criterion(outputs, y)
             loss.backward()
             optimizer.step()
@@ -207,7 +199,6 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
         if early_stop_counter >= patience:
             print("🛑 Early Stopping."); break
 
-    # Test final
     print("\n🏁 Test sur le meilleur modèle...")
     model.load_state_dict(torch.load(best_model_path))
     model.eval()
@@ -225,7 +216,6 @@ def train_model(csv_file, audio_dir, epochs=50, batch_size=16, save_path="CNN/we
     print(f"🏆 RÉSULTAT FINAL (TEST) : Loss: {test_loss/test_total:.4f} - Accuracy: {test_correct/test_total:.4f}")
     torch.save(model.state_dict(), save_path)
 
-    # Plot
     plot_dir = "CNN/training_plot"
     os.makedirs(plot_dir, exist_ok=True)
     epochs_range = range(1, len(train_losses) + 1)

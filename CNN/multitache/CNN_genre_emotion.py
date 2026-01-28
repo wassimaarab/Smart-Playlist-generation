@@ -17,12 +17,11 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Device: {device}")
 
 # ============================================================================
-# 1. MODÈLE UNIFIÉ
+# 1. MODÈLE 
 # ============================================================================
 class MultiTaskCNN(nn.Module):
     def __init__(self, num_genres):
         super().__init__()
-        # Tronc commun
         self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
         self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
         self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
@@ -34,13 +33,11 @@ class MultiTaskCNN(nn.Module):
         self.fc_shared = nn.Linear(512*3, 2048)
         self.dropout = nn.Dropout(0.5)
 
-        # Tête GENRE
         self.head_genre = nn.Sequential(
             nn.Linear(2048, 1024), nn.ReLU(), nn.Dropout(0.5),
             nn.Linear(1024, num_genres)
         )
 
-        # Tête EMOTION (Régression 2 valeurs)
         self.head_emotion = nn.Sequential(
             nn.Linear(2048, 1024), nn.ReLU(), nn.Dropout(0.5),
             nn.Linear(1024, 2) 
@@ -103,7 +100,6 @@ class DEAMDiskDataset(Dataset):
     def __len__(self): return len(self.df)
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        # Target normalisée entre 0.0 et 1.0 (car DEAM est 1-10)
         target = torch.tensor([row['valence'] / 10.0, row['arousal'] / 10.0], dtype=torch.float32)
         cache_path = os.path.join(self.cache_dir, f"{row['filename']}.pt")
         if os.path.exists(cache_path):
@@ -112,7 +108,7 @@ class DEAMDiskDataset(Dataset):
         return torch.zeros(1, 128, 1200), target
 
 # ============================================================================
-# 3. TRAINING AVEC MSE LOSS
+# 3. TRAINING
 # ============================================================================
 def train_and_evaluate():
     GTZAN_CSV = 'Data/features_30_sec.csv'
@@ -151,37 +147,26 @@ def train_and_evaluate():
     ldr_d_test = DataLoader(test_d, batch_size=16, shuffle=False, num_workers=workers)
 
     model = MultiTaskCNN(num_genres=len(full_gtzan.classes)).to(device)
-    # 1. On identifie les paramètres des têtes spécifiques
     genre_params = list(map(id, model.head_genre.parameters()))
     emotion_params = list(map(id, model.head_emotion.parameters()))
     
-    # 2. On filtre pour récupérer le reste (le tronc commun : conv1, conv2, etc.)
     base_params = filter(lambda p: id(p) not in genre_params + emotion_params, 
                          model.parameters())
 
-    # 3. On crée l'optimizer avec des groupes de paramètres
     optim = torch.optim.Adam([
-        # --- TRONC COMMUN (Vitesse standard) ---
         {'params': base_params, 'lr': 1e-4}, 
         
-        # --- GENRE (Vitesse Boostée) ---
-        # On peut le laisser à 1e-4 ou le pousser un peu (ex: 5e-4) pour qu'il apprenne vite
         {'params': model.head_genre.parameters(), 'lr': 1e-4}, 
         
-        # --- EMOTION (FREIN À MAIN) ---
-        # On divise le learning rate par 10 ou 20 !
-        # Ça va forcer cette partie à converger beaucoup plus lentement (ex: en 20 epochs au lieu de 5)
         {'params': model.head_emotion.parameters(), 'lr': 1e-5} 
     ])
     
     print("🔧 Optimizer configuré avec Learning Rates différenciés !")
     
-    # --- CHANGEMENT ICI : RETOUR A MSE LOSS ---
     crit_cls = nn.CrossEntropyLoss()
     crit_reg = nn.MSELoss() 
 
     print("\n🚀 DÉBUT ENTRAÎNEMENT HYBRIDE (CrossEntropy + MSE)...")
-    # On augmente le poids car MSE renvoie des valeurs très petites (ex: 0.05) comparé à CE (ex: 1.5)
     EMO_WEIGHT = 50.0 
 
     epochs = 40; patience = 8; counter = 0; best_score = float('inf')
@@ -202,7 +187,6 @@ def train_and_evaluate():
         for _ in range(iters):
             optim.zero_grad()
             
-            # 1. GTZAN
             try: batch_g = next(iter_g)
             except StopIteration: iter_g = iter(ldr_g_train); batch_g = next(iter_g)
             Xg, yg = batch_g
@@ -213,20 +197,18 @@ def train_and_evaluate():
                 tg_loss += loss_g.item()
                 tg_preds.extend(out.argmax(1).cpu().numpy()); tg_targs.extend(yg.numpy())
 
-            # 2. DEAM (MSE)
             try: batch_d = next(iter_d)
             except StopIteration: iter_d = iter(ldr_d_train); batch_d = next(iter_d)
             Xd, yd = batch_d
             if Xd.shape[0] > 1:
                 out = model(Xd.to(device), 'emotion')
                 loss_d = crit_reg(out, yd.to(device))
-                (loss_d * EMO_WEIGHT).backward() # Pondération x10
+                (loss_d * EMO_WEIGHT).backward() 
                 td_loss += loss_d.item()
                 td_preds.extend(out.detach().cpu().numpy()); td_targs.extend(yd.numpy())
             
             optim.step()
 
-        # Metrics Train
         avg_tg_loss = tg_loss/iters
         avg_td_loss = td_loss/iters
         acc_g_train = accuracy_score(tg_targs, tg_preds)
@@ -235,7 +217,6 @@ def train_and_evaluate():
         H['loss_g_train'].append(avg_tg_loss); H['acc_g_train'].append(acc_g_train)
         H['loss_d_train'].append(avg_td_loss); H['r2_d_train'].append(r2_d_train)
 
-        # --- VALIDATION ---
         model.eval()
         vg_preds, vg_targs, vg_loss = [], [], 0
         vd_preds, vd_targs, vd_loss = [], [], 0
@@ -251,7 +232,6 @@ def train_and_evaluate():
                 vd_loss += crit_reg(out, y.to(device)).item()
                 vd_preds.extend(out.cpu().numpy()); vd_targs.extend(y.numpy())
 
-        # Metrics Val
         avg_vg_loss = vg_loss / len(ldr_g_val)
         avg_vd_loss = vd_loss / len(ldr_d_val)
         acc_g_val = accuracy_score(vg_targs, vg_preds)
@@ -260,7 +240,6 @@ def train_and_evaluate():
         H['loss_g_val'].append(avg_vg_loss); H['acc_g_val'].append(acc_g_val)
         H['loss_d_val'].append(avg_vd_loss); H['r2_d_val'].append(r2_d_val)
         
-        # --- EARLY STOPPING & SAVE ---
         total_val_loss = avg_vg_loss + (avg_vd_loss * EMO_WEIGHT)
         
         save_msg = ""
@@ -271,7 +250,6 @@ def train_and_evaluate():
         else:
             counter += 1; save_msg = f"⏳ {counter}/{patience}"
 
-        # --- AFFICHAGE COMPLET ---
         print(f"Ep {ep+1:02d} | "
               f"GENRE [L:{avg_tg_loss:.2f}->{avg_vg_loss:.2f} | Acc:{acc_g_train:.2f}->{acc_g_val:.2f}] | "
               f"EMO [L:{avg_td_loss:.3f}->{avg_vd_loss:.3f} | R2:{r2_d_train:.2f}->{r2_d_val:.2f}] {save_msg}")
@@ -301,7 +279,6 @@ def train_and_evaluate():
     model.load_state_dict(torch.load(BEST_MODEL_PATH))
     model.eval()
     
-    # On calcule juste les scores finaux pour vérifier
     test_g_preds, test_g_targs = [], []
     test_d_preds, test_d_targs = [], []
 

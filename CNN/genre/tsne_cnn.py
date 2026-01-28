@@ -14,13 +14,12 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ============================================================================
-# 1. CLASSE DU MODÈLE (Avec modification pour extraire l'embedding)
+# 1. CLASSE DU MODÈLE
 # ============================================================================
 class TemporalCNN(nn.Module):
     def __init__(self, num_genres):
         super().__init__()
         
-        # --- BLOC 1 : EXTRACTION DE FEATURES ---
         self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
         self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
         self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
@@ -32,9 +31,8 @@ class TemporalCNN(nn.Module):
         self.pool4x = nn.MaxPool2d(4)
         self.pool2x = nn.MaxPool2d(2)
         
-        # --- BLOC 2 : CLASSIFICATION ---
         self.fc1 = nn.Linear(512*3, 2048)
-        self.fc2 = nn.Linear(2048, 1024) # C'est ici qu'on récupère l'embedding
+        self.fc2 = nn.Linear(2048, 1024) 
         self.fc3 = nn.Linear(1024, num_genres)
         
         self.dropout = nn.Dropout(0.5)
@@ -46,17 +44,14 @@ class TemporalCNN(nn.Module):
         x = self.pool2x(F.relu(self.bn3(self.conv3(x))))
         x = F.relu(self.bn4(self.conv4(x))) 
         
-        # 2. Stats
         mean = x.mean(dim=2)
         max_ = x.max(dim=2).values
         l2 = torch.sqrt((x**2).sum(dim=2))
         x = torch.cat([mean, max_, l2], dim=1).mean(dim=2) 
         
-        # 3. Dense Layers
         x = F.relu(self.fc1(x))
         x = self.dropout(x)
         
-        # On capture l'embedding ici (Feature Vector)
         embedding = F.relu(self.fc2(x))
         
         if return_embedding:
@@ -67,7 +62,7 @@ class TemporalCNN(nn.Module):
         return out
 
 # ============================================================================
-# 2. DATASET (GTZAN)
+# 2. DATASET
 # ============================================================================
 class AudioDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
@@ -75,14 +70,12 @@ class AudioDataset(Dataset):
         self.audio_dir = audio_dir
         self.sr = sr; self.n_mels = n_mels; self.duration = duration
         
-        # Mapping initial
         cat = pd.Categorical(self.original_data['label'])
         self.label_to_index = {cat.categories[i]: i for i in range(len(cat.categories))}
 
         self.cached_specs = []
         self.data = self.load_data_to_cache() 
         
-        # Mise à jour des labels basés sur les données valides
         cat = pd.Categorical(self.data['label'])
         self.labels = cat.codes
         self.label_to_index = {cat.categories[i]: i for i in range(len(cat.categories))}
@@ -140,27 +133,21 @@ def stratified_split(dataset, test_size=0.15, val_size=0.15, random_state=42):
 def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=300, random_state=42):
     print("\n🎨 Préparation de la visualisation t-SNE...")
     
-    # 1. Charger dataset
     dataset = AudioDataset(csv_file, audio_dir, duration=28)
 
-    # 2. Récupérer les indices de TEST
     _, _, test_idx = stratified_split(dataset, random_state=random_state)
     
-    # Si on demande plus d'échantillons qu'il n'y en a dans le test, on prend tout le test
     actual_samples = min(num_samples, len(test_idx))
     print(f"📊 Utilisation de {actual_samples} échantillons du Test Set.")
     
-    # DataLoader sur le sous-ensemble de test
     test_subset = Subset(dataset, test_idx[:actual_samples])
     test_loader = DataLoader(test_subset, batch_size=batch_size, shuffle=False)
 
-    # 3. Charger modèle
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_classes = len(dataset.label_to_index)
     
     model = TemporalCNN(num_genres=num_classes).to(device)
     
-    # Chargement sécurisé des poids
     if not os.path.exists(model_path):
         print(f"❌ Erreur : Modèle introuvable à {model_path}")
         return
@@ -168,14 +155,12 @@ def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=3
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    # 4. Extraire embeddings
     print("🚀 Extraction des embeddings...")
     X_list, y_list = [], []
     
     with torch.no_grad():
         for X, y in test_loader:
             X = X.to(device)
-            # Appel avec return_embedding=True
             embeddings = model(X, return_embedding=True)
             
             X_list.append(embeddings.cpu().numpy())
@@ -183,14 +168,11 @@ def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=3
 
     X_arr = np.concatenate(X_list, axis=0)
     y_arr = np.concatenate(y_list, axis=0)
-
-    # 5. Calcul t-SNE
     
     print("🧮 Calcul du t-SNE...")
     tsne = TSNE(n_components=2, perplexity=30, random_state=42, init='pca')
     X_2d = tsne.fit_transform(X_arr)
 
-    # 6. Affichage
     plt.figure(figsize=(12, 10))
     unique_labels = np.unique(y_arr)
     cmap = plt.get_cmap('tab10')
@@ -217,8 +199,6 @@ def visualize_tsne(model_path, csv_file, audio_dir, batch_size=16, num_samples=3
 # MAIN
 # ============================================================================
 if __name__ == "__main__":
-    # Assurez-vous que ce chemin correspond bien à celui sauvegardé par votre script d'entraînement précédent
-    # Note : Le script d'entraînement précédent utilisait "CNN/weights/temporal_cnn_gtzan_best.pth"
     MODEL_PATH = "CNN/weights/temporal_cnn_gtzan_best.pth"
     CSV_FILE = 'Data/features_30_sec.csv'
     AUDIO_DIR = 'Data/genres_original/'

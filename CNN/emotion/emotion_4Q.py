@@ -12,7 +12,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ----------------------------
-# 1. Dataset (Cache + Folder Structure)
+# 1. Dataset
 # ----------------------------
 class FourQDataset(Dataset):
     def __init__(self, root_dir, sr=22050, n_mels=128, duration=30, cache_dir="cache_4q"):
@@ -79,13 +79,12 @@ class FourQDataset(Dataset):
             return self.__getitem__(np.random.randint(len(self.file_list)))
 
 # ----------------------------
-# 2. Modèle STANDARD
+# 2. Modèle
 # ----------------------------
 class TemporalCNN(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         
-        # --- BLOC 1 : EXTRACTION DE FEATURES (IDENTIQUE AU TRONC COMMUN) ---
         self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
         self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
         self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
@@ -97,41 +96,35 @@ class TemporalCNN(nn.Module):
         self.pool4x = nn.MaxPool2d(4)
         self.pool2x = nn.MaxPool2d(2)
         
-        # --- BLOC 2 : CLASSIFICATION (ANCIENNE "TÊTE GENRE" INTÉGRÉE) ---
-        # FC Shared (512*3 -> 2048)
         self.fc1 = nn.Linear(512*3, 2048)
         
-        # Partie qui était dans la "tête genre" (2048 -> 1024 -> num_genres)
         self.fc2 = nn.Linear(2048, 1024)
         self.fc3 = nn.Linear(1024, num_classes)
         
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
-        # 1. Convolutions
         x = self.pool4x(F.relu(self.bn1(self.conv1(x))))
         x = self.pool2x(F.relu(self.bn2(self.conv2(x))))
         x = self.pool2x(F.relu(self.bn3(self.conv3(x))))
         x = F.relu(self.bn4(self.conv4(x))) 
         
-        # 2. Global Statistics Pooling (Mean, Max, L2)
         mean = x.mean(dim=2)
         max_ = x.max(dim=2).values
         l2 = torch.sqrt((x**2).sum(dim=2))
-        x = torch.cat([mean, max_, l2], dim=1).mean(dim=2) # [Batch, 512*3]
+        x = torch.cat([mean, max_, l2], dim=1).mean(dim=2)
         
-        # 3. Dense Layers (Linéaire)
-        x = F.relu(self.fc1(x))      # -> 2048
+        x = F.relu(self.fc1(x))      
         x = self.dropout(x)
         
-        x = F.relu(self.fc2(x))      # -> 1024
+        x = F.relu(self.fc2(x))     
         x = self.dropout(x)
         
-        out = self.fc3(x)            # -> num_genres
+        out = self.fc3(x)          
         return out
 
 # ----------------------------
-# 3. Main Training (Modifié: Early Stopping + Best Model)
+# 3. Main Training 
 # ----------------------------
 def train(dataset_dir, epochs=100, patience=7):
     print(f"--- Initialisation Dataset sur {dataset_dir} ---")
@@ -157,10 +150,8 @@ def train(dataset_dir, epochs=100, patience=7):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.CrossEntropyLoss()
     
-    # Historique pour les courbes
     history = {'t_loss': [], 'v_loss': [], 't_acc': [], 'v_acc': []}
     
-    # Variables pour Early Stopping et Sauvegarde
     best_val_loss = float('inf')
     early_stop_counter = 0
     save_dir = "CNN/weights_4q"
@@ -168,7 +159,6 @@ def train(dataset_dir, epochs=100, patience=7):
     best_model_path = os.path.join(save_dir, "best_model_4q.pth")
     
     for ep in range(epochs):
-        # --- TRAIN ---
         model.train()
         l_sum, c_sum, n = 0, 0, 0
         for X, y in loaders['train']:
@@ -185,7 +175,6 @@ def train(dataset_dir, epochs=100, patience=7):
         history['t_loss'].append(train_loss)
         history['t_acc'].append(train_acc)
         
-        # --- VALIDATION ---
         model.eval()
         l_sum, c_sum, n = 0, 0, 0
         with torch.no_grad():
@@ -201,7 +190,6 @@ def train(dataset_dir, epochs=100, patience=7):
         
         print(f"Ep {ep+1:02d} | T_Loss:{train_loss:.3f} Acc:{train_acc:.3f} | V_Loss:{val_loss:.3f} Acc:{val_acc:.3f}")
         
-        # --- CHECKPOINT & EARLY STOPPING ---
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             early_stop_counter = 0
@@ -215,13 +203,10 @@ def train(dataset_dir, epochs=100, patience=7):
             print("🛑 Arrêt anticipé (Early Stopping) activé.")
             break
             
-    # --- FIN DE L'ENTRAINEMENT ---
-    
-    # --- TRACÉ DES COURBES ---
+
     print("\n📊 Génération des courbes...")
     plt.figure(figsize=(12, 5))
     
-    # Courbe de Loss
     plt.subplot(1, 2, 1)
     plt.plot(history['t_loss'], label='Train Loss', color='blue')
     plt.plot(history['v_loss'], label='Val Loss', color='orange')
@@ -231,7 +216,6 @@ def train(dataset_dir, epochs=100, patience=7):
     plt.legend()
     plt.grid(True)
     
-    # Courbe d'Accuracy
     plt.subplot(1, 2, 2)
     plt.plot(history['t_acc'], label='Train Acc', color='blue')
     plt.plot(history['v_acc'], label='Val Acc', color='orange')
@@ -242,20 +226,18 @@ def train(dataset_dir, epochs=100, patience=7):
     plt.grid(True)
     
     plt.tight_layout()
-    plt.savefig("CNN/training_curves.png") # Sauvegarde l'image
-    plt.show() # Affiche l'image
+    plt.savefig("CNN/training_curves.png") 
+    plt.show() 
     
     # --- ÉVALUATION FINALE SUR TEST SET ---
     print("\n🏁 Évaluation finale sur le Test Set (avec le MEILLEUR modèle)...")
     
-    # IMPORTANT : On recharge les poids du meilleur modèle, pas le dernier !
     model.load_state_dict(torch.load(best_model_path))
     model.eval()
     
     test_correct = 0
     test_total = 0
     
-    # On peut ajouter une matrice de confusion ici si on veut
     all_preds = []
     all_labels = []
 
@@ -280,6 +262,6 @@ if __name__ == "__main__":
     DATA_DIR = "4Q/MER Audio" 
     
     if os.path.exists(DATA_DIR):
-        train(DATA_DIR, epochs=100, patience=10) # Patience augmentée à 10
+        train(DATA_DIR, epochs=100, patience=10)
     else:
         print(f"❌ Dossier introuvable : {DATA_DIR}")

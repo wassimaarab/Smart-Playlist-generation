@@ -19,7 +19,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Device: {device}")
 
 # ============================================================================
-# 1. PRÉPARATION (Mode Régression)
+# 1. PRÉPARATION
 # ============================================================================
 def prepare_deam_regression(raw_root, output_dir="DEAM_Regression"):
     csv_out_path = os.path.join(output_dir, "metadata.csv")
@@ -75,7 +75,7 @@ def prepare_deam_regression(raw_root, output_dir="DEAM_Regression"):
     return new_df
 
 # ============================================================================
-# 2. DATASET (Avec Augmentation)
+# 2. DATASET
 # ============================================================================
 class RegressionDataset(Dataset):
     def __init__(self, root_dir, dataframe, sr=22050, n_mels=128, duration=30, cache_dir="cache_reg", augment=False):
@@ -97,17 +97,14 @@ class RegressionDataset(Dataset):
         fname = row['filename']
         path = os.path.join(self.root_dir, fname)
         
-        # Cibles (Normalisées 0.1 - 0.9)
         target = torch.tensor([row['valence'] / 10.0, row['arousal'] / 10.0], dtype=torch.float32)
         
         cache_path = os.path.join(self.cache_dir, f"{fname}.pt")
         
-        # A. Si pas d'augmentation, on utilise le cache
         if not self.augment and os.path.exists(cache_path):
             try: return torch.load(cache_path), target
             except: pass
             
-        # B. Sinon on calcule (pour augmenter)
         try:
             y, sr = librosa.load(path, sr=self.sr, duration=self.duration)
             
@@ -178,7 +175,7 @@ class RegressionCNN(nn.Module):
         return self.fc3(emb)
 
 # ============================================================================
-# 4. TRAINING LOOP (Avec Train R2 & Val R2)
+# 4. TRAINING LOOP
 # ============================================================================
 def train_regression(root_dir, epochs=70, patience=10):
     df_meta = prepare_deam_regression("deam", root_dir)
@@ -202,7 +199,6 @@ def train_regression(root_dir, epochs=70, patience=10):
     optim = torch.optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-3)
     crit = nn.MSELoss() 
     
-    # Ajout de 'train_r2' dans l'historique
     H = {'loss':[], 'val_loss':[], 'train_r2':[], 'val_r2':[]}
     
     best_loss = float('inf') 
@@ -212,7 +208,6 @@ def train_regression(root_dir, epochs=70, patience=10):
     print(f"\n🚀 Start Regression Training ({epochs} Epochs)...")
     
     for ep in range(epochs):
-        # --- TRAIN ---
         model.train()
         l_sum = 0
         train_preds, train_targs = [], []
@@ -226,7 +221,6 @@ def train_regression(root_dir, epochs=70, patience=10):
             optim.step()
             l_sum += loss.item()
             
-            # On stocke pour le R2
             train_preds.append(out.detach().cpu().numpy())
             train_targs.append(y.detach().cpu().numpy())
         
@@ -236,7 +230,6 @@ def train_regression(root_dir, epochs=70, patience=10):
         H['loss'].append(avg_loss)
         H['train_r2'].append(train_r2)
         
-        # --- VALIDATION ---
         model.eval()
         v_l_sum = 0
         val_preds, val_targs = [], []
@@ -254,7 +247,6 @@ def train_regression(root_dir, epochs=70, patience=10):
         H['val_loss'].append(avg_v_loss)
         H['val_r2'].append(val_r2)
         
-        # --- EARLY STOPPING CHECK ---
         save_msg = ""
         if avg_v_loss < best_loss:
             best_loss = avg_v_loss
@@ -289,10 +281,8 @@ def train_regression(root_dir, epochs=70, patience=10):
     final_r2 = r2_score(targets, preds)
     print(f"🏆 Test R2 Score : {final_r2:.4f}")
     
-    # --- COURBES (MODIFIÉES POUR AVOIR TRAIN ET VAL) ---
     plt.figure(figsize=(12,5))
     
-    # Loss Plot
     plt.subplot(1,2,1)
     plt.plot(H['loss'], label='Train Loss', color='blue')
     plt.plot(H['val_loss'], label='Val Loss', color='orange')
@@ -300,7 +290,6 @@ def train_regression(root_dir, epochs=70, patience=10):
     plt.legend()
     plt.grid(True)
     
-    # R2 Plot (C'est ici qu'on a ajouté la courbe Train)
     plt.subplot(1,2,2)
     plt.plot(H['train_r2'], label='Train R2', color='blue', linestyle='--')
     plt.plot(H['val_r2'], label='Val R2', color='orange')
@@ -312,7 +301,6 @@ def train_regression(root_dir, epochs=70, patience=10):
     plt.savefig('CNN/tsne_plot/regression_curves.png')
     plt.show()
     
-    # Scatter Plot
     plt.figure(figsize=(6,6))
     plt.scatter(targets[:,0], preds[:,0], alpha=0.5, label='Valence', color='blue')
     plt.scatter(targets[:,1], preds[:,1], alpha=0.5, label='Arousal', color='red')
@@ -321,13 +309,10 @@ def train_regression(root_dir, epochs=70, patience=10):
     plt.savefig('CNN/tsne_plot/regression_scatter.png')
     plt.show()
 
-    # t-SNE
     print("🎨 Calcul t-SNE...")
-    # On détermine les quadrants pour les couleurs
     colors, labels = [], []
     for i in range(len(targets)):
         v, a = targets[i]
-        # Seuils à 0.5 car normalisé
         if v >= 0.5 and a >= 0.5: l="Q1 Happy"; c="red"
         elif v < 0.5 and a >= 0.5: l="Q2 Angry"; c="orange"
         elif v < 0.5 and a < 0.5: l="Q3 Sad"; c="blue"

@@ -16,7 +16,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"🖥️ Device utilisé : {device}")
 
 # ============================================================================
-# 1. MODÈLE (DOIT ÊTRE IDENTIQUE À L'ENTRAÎNEMENT)
+# 1. MODÈLE
 # ============================================================================
 def ensure_fixed_length(tensor, target_len=1292):
     current_len = tensor.shape[2]
@@ -63,7 +63,7 @@ class MultiTaskCNN(nn.Module):
         elif task == 'emotion': return self.head_emotion(self.dropout(emb))
 
 # ============================================================================
-# 2. DATASETS (ROBUSTES)
+# 2. DATASETS
 # ============================================================================
 class GTZANFullDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
@@ -113,7 +113,6 @@ class DEAMCachedFullDataset(Dataset):
             item = self.valid_files[idx]
             X = torch.load(item['path'])
             X = ensure_fixed_length(X, self.target_len)
-            # Normalisation 0-1 pour les quadrants
             val = item['valence'] / 10.0
             aro = item['arousal'] / 10.0
             return {'tensor': X, 'label': 'DEAM', 'source': 'DEAM', 'valence': val, 'arousal': aro}
@@ -128,9 +127,9 @@ def extract_and_plot_side_by_side(model, dataloader):
     model.eval()
     
     embeddings = []
-    labels = []    # Pour Genre
-    sources = []   # GTZAN ou DEAM
-    quadrants = [] # Pour Emotion
+    labels = []    
+    sources = []   
+    quadrants = [] 
     
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
@@ -143,7 +142,6 @@ def extract_and_plot_side_by_side(model, dataloader):
                 sources.append(batch['source'][j])
                 labels.append(batch['label'][j])
                 
-                # Calcul Quadrant (Seulement utile pour DEAM)
                 v = batch['valence'][j].item()
                 a = batch['arousal'][j].item()
                 
@@ -155,26 +153,21 @@ def extract_and_plot_side_by_side(model, dataloader):
                 
             print(f"Batch {i+1}/{len(dataloader)}...", end='\r')
 
-    # --- t-SNE ---
     print("\n\n🎨 Calcul du t-SNE (Projection 2D)...")
     tsne = TSNE(n_components=2, perplexity=30, random_state=42, init='pca')
     X_2d = tsne.fit_transform(np.array(embeddings))
     
-    # --- PRÉPARATION PLOT ---
     idx_gtzan = [i for i, s in enumerate(sources) if s == 'GTZAN']
     idx_deam = [i for i, s in enumerate(sources) if s == 'DEAM']
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, 10), sharex=True, sharey=True)
     
-    # === GRAPHE 1 : GENRE (Focus GTZAN) ===
-    # Fond : DEAM en gris
     ax1.scatter(X_2d[idx_deam, 0], X_2d[idx_deam, 1], c='lightgray', s=10, alpha=0.2)
     
     unique_genres = sorted(list(set([labels[i] for i in idx_gtzan])))
     cmap = plt.get_cmap('tab10')
     
     for i, genre in enumerate(unique_genres):
-        # Indices locaux pour ce genre
         indices = [k for k in idx_gtzan if labels[k] == genre]
         color = cmap(i / 10)
         ax1.scatter(X_2d[indices, 0], X_2d[indices, 1], c=[color], label=genre, s=25, alpha=0.7, edgecolors='white', linewidth=0.3)
@@ -183,8 +176,6 @@ def extract_and_plot_side_by_side(model, dataloader):
     ax1.legend(title="Genres", loc='upper left')
     ax1.grid(alpha=0.3)
 
-    # === GRAPHE 2 : EMOTION (Focus DEAM - Quadrants) ===
-    # Fond : GTZAN en gris
     ax2.scatter(X_2d[idx_gtzan, 0], X_2d[idx_gtzan, 1], c='lightgray', s=10, alpha=0.2)
     
     quad_colors = {
@@ -195,7 +186,6 @@ def extract_and_plot_side_by_side(model, dataloader):
     }
     
     for q_name, q_color in quad_colors.items():
-        # Indices locaux pour ce quadrant (parmi DEAM)
         indices = [k for k in idx_deam if quadrants[k] == q_name]
         if len(indices) > 0:
             ax2.scatter(X_2d[indices, 0], X_2d[indices, 1], c=q_color, label=q_name, s=25, alpha=0.7, edgecolors='white', linewidth=0.3)
@@ -223,7 +213,6 @@ if __name__ == "__main__":
     
     if len(ds_g) == 0 and len(ds_d) == 0: exit("❌ Erreur Dataset.")
 
-    # Concaténation et Split Test
     full_dataset = ConcatDataset([ds_g, ds_d])
     total_len = len(full_dataset)
     train_sz = int(0.7 * total_len); val_sz = int(0.15 * total_len)

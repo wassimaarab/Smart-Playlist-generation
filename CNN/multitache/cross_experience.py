@@ -17,10 +17,9 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Device: {device}")
 
 # ============================================================================
-# 🎛️ CONFIGURATION DE L'EXPÉRIENCE
+# CONFIGURATION DE L'EXPÉRIENCE
 # ============================================================================
-# Changez ceci pour alterner l'expérience
-# TRAIN_MODE = "GENRE" 
+
 TRAIN_MODE = "GENRE"
 
 print(f"\n🔬 MODE EXPÉRIMENTAL : Entraînement sur {TRAIN_MODE} uniquement (avec Early Stopping).")
@@ -38,12 +37,11 @@ def ensure_fixed_length(tensor, target_len=1292):
         return tensor
 
 # ============================================================================
-# 1. MODÈLE PARTAGÉ
+# 1. MODÈLE
 # ============================================================================
 class SharedCNN(nn.Module):
     def __init__(self, num_genres):
         super().__init__()
-        # Tronc commun
         self.conv1 = nn.Conv2d(1, 128, (1,4), padding=1)
         self.conv2 = nn.Conv2d(128, 256, (1,4), padding=1)
         self.conv3 = nn.Conv2d(256, 256, (1,4), padding=1)
@@ -55,7 +53,6 @@ class SharedCNN(nn.Module):
         self.fc_shared = nn.Linear(512*3, 2048)
         self.dropout = nn.Dropout(0.5)
 
-        # Têtes
         self.head_genre = nn.Sequential(
             nn.Linear(2048, 1024), nn.ReLU(), nn.Dropout(0.5),
             nn.Linear(1024, num_genres)
@@ -81,7 +78,7 @@ class SharedCNN(nn.Module):
         elif task == 'emotion': return self.head_emotion(self.dropout(emb))
 
 # ============================================================================
-# 2. DATASETS (ROBUSTES)
+# 2. DATASETS
 # ============================================================================
 class GTZANRobustDataset(Dataset):
     def __init__(self, csv_file, audio_dir, sr=22050, n_mels=128, duration=28):
@@ -174,7 +171,7 @@ def evaluate_emotion(model, loader, emo_weight=50.0):
     return total_loss / len(loader), r2_score(np.array(targs), np.array(preds))
 
 # ============================================================================
-# 4. TRAINING LOOP PRINCIPALE
+# 4. TRAINING LOOP
 # ============================================================================
 def run_experiment():
     GTZAN_CSV = 'Data/features_30_sec.csv'; GTZAN_AUDIO = 'Data/genres_original/'
@@ -183,13 +180,11 @@ def run_experiment():
     if not os.path.exists(SAVE_DIR): os.makedirs(SAVE_DIR)
     BEST_MODEL_PATH = os.path.join(SAVE_DIR, f"best_cross_{TRAIN_MODE.lower()}.pth")
     
-    # 1. Load Data
     full_gtzan = GTZANRobustDataset(GTZAN_CSV, GTZAN_AUDIO)
     full_deam = DEAMRobustDataset(DEAM_ROOT, DEAM_CACHE)
     if len(full_gtzan) == 0 or len(full_deam) == 0: 
         print("❌ Erreur : Datasets vides."); return
 
-    # 2. Split (70% Train, 15% Val, 15% Test) 
     def create_splits(dataset):
         total = len(dataset)
         train_sz = int(0.7 * total)
@@ -200,7 +195,6 @@ def run_experiment():
     train_g, val_g, test_g = create_splits(full_gtzan)
     train_d, val_d, test_d = create_splits(full_deam)
 
-    # Loaders
     ldr_g_train = DataLoader(train_g, batch_size=16, shuffle=True)
     ldr_g_val   = DataLoader(val_g, batch_size=16, shuffle=False)
     ldr_g_test  = DataLoader(test_g, batch_size=16, shuffle=False)
@@ -209,7 +203,6 @@ def run_experiment():
     ldr_d_val   = DataLoader(val_d, batch_size=16, shuffle=False)
     ldr_d_test  = DataLoader(test_d, batch_size=16, shuffle=False)
 
-    # Model & Optim
     model = SharedCNN(num_genres=len(full_gtzan.classes)).to(device)
     
     genre_params = list(map(id, model.head_genre.parameters()))
@@ -226,18 +219,16 @@ def run_experiment():
     crit_reg = nn.MSELoss()
     EMO_WEIGHT = 50.0 
 
-    # 3. Training Loop with Early Stopping 
     print(f"\n🚀 DÉBUT ENTRAÎNEMENT CIBLÉ SUR : {TRAIN_MODE}")
     epochs = 40
     patience = 8
     counter = 0
-    best_val_metric = float('inf') # On minimise la Loss
+    best_val_metric = float('inf')
 
     for ep in range(epochs):
         model.train()
         train_loss_accum = 0
         
-        # --- TRAIN STEP ---
         if TRAIN_MODE == "GENRE":
             for X, y in ldr_g_train:
                 optim.zero_grad()
@@ -247,11 +238,10 @@ def run_experiment():
                 train_loss_accum += loss.item()
             avg_train_loss = train_loss_accum / len(ldr_g_train)
             
-            # --- VAL STEP (GENRE) ---
             val_loss, val_acc = evaluate_genre(model, ldr_g_val)
             print(f"Ep {ep+1:02d} | Train Loss:{avg_train_loss:.4f} | Val Loss:{val_loss:.4f} | Val Acc:{val_acc:.4f}", end="")
             
-            current_val_score = val_loss # Early stopping sur la loss
+            current_val_score = val_loss 
 
         elif TRAIN_MODE == "EMOTION":
             for X, y in ldr_d_train:
@@ -262,13 +252,11 @@ def run_experiment():
                 train_loss_accum += loss.item() * EMO_WEIGHT
             avg_train_loss = train_loss_accum / len(ldr_d_train)
             
-            # --- VAL STEP (EMOTION) ---
             val_loss, val_r2 = evaluate_emotion(model, ldr_d_val, EMO_WEIGHT)
             print(f"Ep {ep+1:02d} | Train Loss:{avg_train_loss:.4f} | Val Loss:{val_loss:.4f} | Val R2:{val_r2:.4f}", end="")
             
             current_val_score = val_loss
 
-        # --- EARLY STOPPING CHECK ---
         if current_val_score < best_val_metric:
             best_val_metric = current_val_score
             counter = 0
@@ -288,14 +276,11 @@ def run_experiment():
     print("🏆 ÉVALUATION FINALE SUR LE TEST SET (Meilleur Modèle)")
     print("="*50)
     
-    # Recharger le meilleur modèle
     model.load_state_dict(torch.load(BEST_MODEL_PATH))
     
-    # 1. Calcul sur GENRE (GTZAN Test)
     _, test_acc = evaluate_genre(model, ldr_g_test)
     print(f"🎸 GENRE (GTZAN Test) Accuracy : {test_acc:.4f} ({test_acc*100:.2f}%)")
     
-    # 2. Calcul sur EMOTION (DEAM Test)
     _, test_r2 = evaluate_emotion(model, ldr_d_test, EMO_WEIGHT)
     print(f"❤️ EMOTION (DEAM Test) R2 Score : {test_r2:.4f}")
     
@@ -306,9 +291,8 @@ def run_experiment():
         print("Note : Le score Genre est probablement bas car le modèle n'a appris que l'Émotion.")
 
     # ========================================================================
-    # 6. VISUALISATION CROISÉE (Optionnelle)
+    # 6. VISUALISATION CROISÉE
     # ========================================================================
-    # Pour la visu, on utilise les Sets de TEST (données jamais vues)
     ldr_visu_g = ldr_g_test
     ldr_visu_d = ldr_d_test
     
@@ -317,7 +301,6 @@ def run_experiment():
     embeddings, labels_visu, colors_visu = [], [], []
     deam_quads = [] 
     
-    # 1. Extraction GTZAN (Test Set)
     with torch.no_grad():
         for X, y in ldr_visu_g:
             X = ensure_fixed_length(X)
@@ -328,13 +311,11 @@ def run_experiment():
                 colors_visu.append(f"C{lbl.item()}")
                 deam_quads.append("Not DEAM")
 
-    # 2. Extraction DEAM (Test Set)
     with torch.no_grad():
         for X, y in ldr_visu_d:
             X = ensure_fixed_length(X)
             emb = model(X.to(device), task='embedding').cpu().numpy()
             embeddings.extend(emb)
-            # Quadrants
             for val_ar in y:
                 v, a = val_ar[0].item(), val_ar[1].item()
                 if v>=0.5 and a>=0.5: q, c = "Q1 Happy", "red"
@@ -346,14 +327,12 @@ def run_experiment():
                 colors_visu.append(c)
                 deam_quads.append(q)
 
-    # t-SNE Global
     tsne = TSNE(n_components=2, perplexity=30, init='pca', random_state=42)
     X_2d = tsne.fit_transform(np.array(embeddings))
     
     idx_gtzan = [i for i, l in enumerate(labels_visu) if l != "DEAM"]
     idx_deam = [i for i, l in enumerate(labels_visu) if l == "DEAM"]
 
-    # --- DOUBLE PLOT ---
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 9), sharex=True, sharey=True)
     
     if TRAIN_MODE == "GENRE":
@@ -361,7 +340,6 @@ def run_experiment():
     else:
         fig.suptitle(f"Entraînement : ÉMOTION (DEAM with MSE) -> Projection : GENRE (GTZAN)", fontsize=16)
 
-    # GAUCHE : GENRES
     ax1.scatter(X_2d[idx_deam, 0], X_2d[idx_deam, 1], c='lightgray', s=15, alpha=0.3) 
     unique_genres = sorted(list(set([l for l in labels_visu if l != "DEAM"])))
     for g in unique_genres:
@@ -372,7 +350,6 @@ def run_experiment():
     ax1.set_title("Coloration par GENRE")
     ax1.legend(fontsize='x-small', loc='upper left')
 
-    # DROITE : EMOTIONS
     ax2.scatter(X_2d[idx_gtzan, 0], X_2d[idx_gtzan, 1], c='lightgray', s=15, alpha=0.3)
     unique_quads = ["Q1 Happy", "Q2 Angry", "Q3 Sad", "Q4 Relax"]
     quad_colors = {"Q1 Happy":"red", "Q2 Angry":"orange", "Q3 Sad":"blue", "Q4 Relax":"green"}
