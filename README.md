@@ -44,3 +44,6 @@ This project demonstrates automatic playlist generation based on **music similar
 - Playlists are exported in Exported_Playlists folder with a corresponding .m3u file.
 - Embedding extraction and visualization scripts support multiple datasets.
 - Energy tracking is optional and requires GPU access for accurate logs.
+
+## Repport 
+The repport contains all the details and the results.
